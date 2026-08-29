@@ -19,7 +19,15 @@ func NewDB(config config.DBConfig) (*gorm.DB,error) {
     }
 
     // ping建立真实连接，查看是否正常
-    if 
+    sqlDB,err := db.DB() //获取底层的连接池
+    if err != nil {
+	return nil,err
+    }
+
+    if err := sqlDB.Ping(); err != nil {
+	return nil,err
+    }
+
     return db,nil
 }
 
@@ -28,6 +36,15 @@ func AutoMigrate(db *gorm.DB) error {
     return nil
 }
 
+// CloseDB 关闭数据库连接
 func CloseDB(db *gorm.DB) error {
+    connPool,err := db.DB()
+    if err != nil {
+	return nil
+    }
 
+    if connPool != nil {
+	return connPool.Close()
+    }
+    return nil
 }
