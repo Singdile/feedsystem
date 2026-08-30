@@ -69,8 +69,6 @@ func Init() error {
 		return fmt.Errorf("unmarshal config failed,err: %v", err)
 	}
 
-	log.Printf("[config] load successfully,%#v",Conf)
+	log.Printf("[config] load successfully,%#v", Conf)
 	return nil
 }
-
-

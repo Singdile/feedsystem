@@ -1,5 +1,5 @@
-// Package db 负责连接数据库
-package db
+// Package data 负责连接数据库
+package data
 
 import (
 	"feedsystem/internal/config"
@@ -10,41 +10,41 @@ import (
 )
 
 // NewDB 初始化数据库连接
-func NewDB(config config.DBConfig) (*gorm.DB,error) {
-    // 初始化
-    dsn := fmt.Sprintf("%v:%v@tcp(%v:%v)/%v?charset=utf8mb4&parseTime=True&loc=Local",config.User,config.Password,config.Host,config.Port,config.Dbname)
-    db,err := gorm.Open(mysql.Open(dsn),&gorm.Config{})
-    if err != nil {
-	return nil,err
-    }
+func NewDB(config config.DBConfig) (*gorm.DB, error) {
+	// 初始化
+	dsn := fmt.Sprintf("%v:%v@tcp(%v:%v)/%v?charset=utf8mb4&parseTime=True&loc=Local", config.User, config.Password, config.Host, config.Port, config.Dbname)
+	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
+	if err != nil {
+		return nil, err
+	}
 
-    // ping建立真实连接，查看是否正常
-    sqlDB,err := db.DB() //获取底层的连接池
-    if err != nil {
-	return nil,err
-    }
+	// ping建立真实连接，查看是否正常
+	sqlDB, err := db.DB() //获取底层的连接池
+	if err != nil {
+		return nil, err
+	}
 
-    if err := sqlDB.Ping(); err != nil {
-	return nil,err
-    }
+	if err := sqlDB.Ping(); err != nil {
+		return nil, err
+	}
 
-    return db,nil
+	return db, nil
 }
 
 // AutoMigrate 根据定义，迁移创建表
 func AutoMigrate(db *gorm.DB) error {
-    return nil
+	return nil
 }
 
 // CloseDB 关闭数据库连接
 func CloseDB(db *gorm.DB) error {
-    connPool,err := db.DB()
-    if err != nil {
-	return nil
-    }
+	connPool, err := db.DB()
+	if err != nil {
+		return nil
+	}
 
-    if connPool != nil {
-	return connPool.Close()
-    }
-    return nil
+	if connPool != nil {
+		return connPool.Close()
+	}
+	return nil
 }
