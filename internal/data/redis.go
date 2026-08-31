@@ -1,5 +1,4 @@
-// Package redis 负责管理redis连接配置
-package redis
+package data
 
 import (
 	"context"

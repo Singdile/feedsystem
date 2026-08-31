@@ -22,18 +22,7 @@ tidy:
 	go mod tidy
 	go fmt ./...
 
-# 4. 数据库迁移指令 (特殊操作)
-migrate-create:
-	@if [ -z "$(name)" ]; then echo "错误: 请提供迁移名称，例如 make migrate-create name=add_user_table"; exit 1; fi
-	migrate create -ext sql -dir $(MIGRATE_DIR) -seq $(name)
-
-migrate-up:
-	migrate -path $(MIGRATE_DIR) -database "$(DB_DSN)" up
-
-migrate-down:
-	migrate -path $(MIGRATE_DIR) -database "$(DB_DSN)" down 1
-
-# 5. 清理与帮助 (工具类)
+# 4. 清理与帮助 (工具类)
 redis:
 	docker run -d --name redis-blue -p 6379:6379 redis:latest
 
@@ -47,9 +36,6 @@ help:
 	@echo "使用说明："
 	@echo "  make (all)             - 整理依赖并编译项目 (默认)"
 	@echo "  make run               - 直接运行项目"
-	@echo "  make migrate-create name=xxx - 创建迁移文件"
-	@echo "  make migrate-up        - 执行所有 Up 迁移"
-	@echo "  make migrate-down      - 执行一步 Down 回滚"
 
 # 6. 【统一声明】.PHONY (放在最后或目标上方，防止冲突)
-.PHONY: all build run test tidy clean help migrate-create migrate-up migrate-down
+.PHONY: all build run test tidy clean help

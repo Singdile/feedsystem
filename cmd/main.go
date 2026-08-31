@@ -2,11 +2,12 @@
 package main
 
 import (
+	"fmt"
+	"log"
+
 	"feedsystem/internal/config"
 	"feedsystem/internal/data"
-	"feedsystem/internal/middleware/rabbitmq"
-	"feedsystem/internal/middleware/redis"
-	"log"
+	"feedsystem/internal/http"
 )
 
 func main() {
@@ -25,18 +26,24 @@ func main() {
 	defer data.CloseDB(DB)
 
 	// 连接redis
-	rdb, err := redis.NewRedis(conf.RedisConfig)
+	rdb, err := data.NewRedis(conf.RedisConfig)
 	if err != nil {
 		log.Fatalf("falied to connect redis,err:%v", err)
 	}
 	defer rdb.Close()
 
-	// 连接rabbitmq
-	_, err = rabbitmq.NewRabbitMQ(conf.RabbitMQConfig)
-	if err != nil {
-		log.Fatalf("falied to connect rabbitmq,err:%v", err)
+	// 连接rabbitmq（MQ 不可用时降级禁用，不阻塞启动）
+	if _, err = data.NewRabbitMQ(conf.RabbitMQConfig); err != nil {
+		log.Printf("rabbitmq connect failed (mq disabled): %v", err)
+	} else {
+		log.Printf("RabbitMQ connected")
 	}
 
-	// 设置路由
-
+	// 装配路由并启动 HTTP 服务
+	router := http.SetRouter()
+	addr := fmt.Sprintf(":%d", conf.AppConfig.Port)
+	log.Printf("Server is running on %s", addr)
+	if err := router.Run(addr); err != nil {
+		log.Fatalf("failed to run server: %v", err)
+	}
 }

@@ -1,5 +1,4 @@
-// Package rabbitmq 连接rabbitmq
-package rabbitmq
+package data
 
 import (
 	"context"
