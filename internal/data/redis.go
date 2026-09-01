@@ -39,3 +39,20 @@ func (c *RedisClient) Close() error {
 
 	return c.rdb.Close()
 }
+
+func (c *RedisClient) Key(format string, a ...any) string {
+	return fmt.Sprintf(format, a...)
+}
+
+func (c *RedisClient) Get(ctx context.Context, key string) (string, error) {
+	return c.rdb.Get(ctx, key).Result()
+}
+
+func (c *RedisClient) Set(ctx context.Context, key string, val any, ttl time.Duration) (string, error) {
+	return c.rdb.Set(ctx, key, val, ttl).Result()
+}
+
+func (c *RedisClient) Del(ctx context.Context, key string) error {
+	_, err := c.rdb.Del(ctx, key).Result()
+	return err
+}

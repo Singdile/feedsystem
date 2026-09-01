@@ -2,13 +2,19 @@
 package http
 
 import (
+	"feedsystem/internal/data"
 	"feedsystem/internal/http/handler/user"
+	"feedsystem/internal/middleware/auth"
+	"feedsystem/internal/pkg/jwt"
+	userrepo "feedsystem/internal/repository/user"
+	usersvc "feedsystem/internal/service/user"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 // SetRouter 装配全部路由与中间件
-func SetRouter() *gin.Engine {
+func SetRouter(db *gorm.DB, cache *data.RedisClient) *gin.Engine {
 	r := gin.Default()
 
 	// 健康检查
@@ -16,14 +22,23 @@ func SetRouter() *gin.Engine {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
 
-	userHandler := user.NewHandler()
+	// 中间件装配
+	authmiddle := auth.NewAuthSecret(jwt.JwtSecrete())
+
+	// 依赖注入，装配
+	userRepo := userrepo.NewuserRepo(db)
+	userSvc := usersvc.NewUserService(userRepo, cache)
+	userHandler := user.NewHandler(userSvc)
 
 	// 用户api
-	userG := r.Group("/api/v1/users")
-	userG.POST("", userHandler.Register)                   //创建用户
-	userG.PUT("/:id/password", userHandler.ChangePassword) //修改密码
-	userG.GET("/:id", userHandler.GetByID)                 //按照ID查询
-	userG.GET("", userHandler.ListByUsername)              //按照username,使用query查询
+	r.POST("/api/v1/users", userHandler.Register) //创建用户
+
+	userG := r.Group("/api/v1/users", authmiddle.JWTAuthMiddleWare(cache))
+	{
+		userG.PUT("/:id/password", userHandler.ChangePassword) //修改密码
+		userG.GET("/:id", userHandler.GetByID)                 //按照ID查询
+		userG.GET("", userHandler.ListByUsername)              //按照username,使用query查询
+	}
 
 	// 认证
 	authG := r.Group("/api/v1/auth")

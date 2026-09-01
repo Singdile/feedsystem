@@ -3,6 +3,7 @@ package data
 
 import (
 	"feedsystem/internal/config"
+	"feedsystem/internal/model/account"
 	"fmt"
 
 	"gorm.io/driver/mysql"
@@ -33,7 +34,7 @@ func NewDB(config config.DBConfig) (*gorm.DB, error) {
 
 // AutoMigrate 根据定义，迁移创建表
 func AutoMigrate(db *gorm.DB) error {
-	return nil
+	return db.AutoMigrate(&account.User{})
 }
 
 // CloseDB 关闭数据库连接

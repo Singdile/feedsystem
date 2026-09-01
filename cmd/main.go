@@ -25,6 +25,10 @@ func main() {
 	}
 	defer data.CloseDB(DB)
 
+	if err := data.AutoMigrate(DB); err != nil {
+		log.Fatalf("failed to auto migrate,err: %v", err)
+	}
+
 	// 连接redis
 	rdb, err := data.NewRedis(conf.RedisConfig)
 	if err != nil {
@@ -40,7 +44,7 @@ func main() {
 	}
 
 	// 装配路由并启动 HTTP 服务
-	router := http.SetRouter()
+	router := http.SetRouter(DB, rdb)
 	addr := fmt.Sprintf(":%d", conf.AppConfig.Port)
 	log.Printf("Server is running on %s", addr)
 	if err := router.Run(addr); err != nil {
