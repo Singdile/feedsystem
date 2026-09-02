@@ -9,6 +9,12 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+const (
+	getAccessByID  = "account:%d"
+	getRefreshByID = "account:%d:refresh"
+	getIDByRefresh = "refresh:%s"
+)
+
 type RedisClient struct {
 	rdb *redis.Client
 }
@@ -42,6 +48,18 @@ func (c *RedisClient) Close() error {
 
 func (c *RedisClient) Key(format string, a ...any) string {
 	return fmt.Sprintf(format, a...)
+}
+
+func (c *RedisClient) GetAccessByID(ctx context.Context, id uint) (string, error) {
+	return c.rdb.Get(ctx, fmt.Sprintf(getAccessByID, id)).Result()
+}
+
+func (c *RedisClient) GetRefreshByID(ctx context.Context, id uint) (string, error) {
+	return c.rdb.Get(ctx, fmt.Sprintf(getRefreshByID, id)).Result()
+}
+
+func (c *RedisClient) GetIDByRefresh(ctx context.Context, refreshtoken string) (string, error) {
+	return c.rdb.Get(ctx, fmt.Sprintf(getIDByRefresh, refreshtoken)).Result()
 }
 
 func (c *RedisClient) Get(ctx context.Context, key string) (string, error) {

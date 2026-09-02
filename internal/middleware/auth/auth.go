@@ -41,14 +41,15 @@ func (a *AuthSecret) JWTAuthMiddleWare(cache *data.RedisClient) gin.HandlerFunc 
 			return
 		}
 
-		// jwt撤销检测。账户logout之后，重新登录会获得一个新的jwt token.
+		// jwt撤销检测。有效会话的 account:%d 必须存在且与当前token一致；
+		// 键缺失（登出/被踢）或值不一致（轮换/换设备覆盖）一律视为已失效。
 		if cache != nil {
 			ctx, cancel := context.WithTimeout(c.Request.Context(), 100*time.Millisecond)
 			defer cancel()
 
 			oldtoken, err := cache.Get(ctx, cache.Key("account:%d", claim.AccountID))
-			if err == nil && oldtoken != tokenstr {
-				response.Fail(c, 401, "token has been revoked")
+			if err != nil || oldtoken != tokenstr {
+				response.Fail(c, http.StatusUnauthorized, "token has been revoked")
 				c.Abort()
 				return
 			}
@@ -56,7 +57,7 @@ func (a *AuthSecret) JWTAuthMiddleWare(cache *data.RedisClient) gin.HandlerFunc 
 
 		// 2.如果有效，允许通过
 		// 设置用户信息，方便后续的接口调用
-		c.Set("account_id", claim.AccountID)
+		c.Set("user_id", claim.AccountID)
 		c.Set("username", claim.Username)
 		c.Next()
 	}

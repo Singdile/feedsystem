@@ -18,3 +18,16 @@ type LoginReq struct {
 	Username string `json:"username" binding:"required"`
 	Password string `json:"password" binding:"required"`
 }
+
+type ChangePasswordReq struct {
+	UserID      uint   `json:"user_id"`
+	NewPassword string `json:"newpassword"`
+}
+
+type RefreshTokenReq struct {
+	RefreshToken string `json:"refresh_token" binding:"required"`
+}
+
+type LogoutReq struct {
+	RefreshToken string `json:"refresh_token" binding:"required"`
+}

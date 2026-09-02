@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,6 +16,11 @@ import (
 	apperrors "feedsystem/internal/pkg/errors"
 	"feedsystem/internal/pkg/jwt"
 	"feedsystem/internal/pkg/password"
+)
+
+const (
+	cacheKeyAccess  = "account:%d"
+	cacheKeyRefresh = "account:%d:refresh"
 )
 
 // UserRepo user操作接口定义在service层，调用者定义契约
@@ -67,7 +73,8 @@ func (s *UserService) ChangePassword(ctx context.Context, id uint, newpassword s
 		return err
 	}
 	// 修改密码
-	err = s.repo.UpdatePassword(ctx, id, newpassword)
+	newpwd, _ := password.Hash(newpassword)
+	err = s.repo.UpdatePassword(ctx, id, newpwd)
 	if err != nil {
 		return err
 	}
@@ -125,4 +132,72 @@ func (s *UserService) Login(ctx context.Context, username, rawPassword string) (
 	}()
 	// 返回token
 	return accessToken, refreshToken, nil
+}
+
+// Refresh 刷新access token 和 refresh token
+func (s *UserService) Refresh(ctx context.Context, refreshToken string) (accessToken, newRefresh string, err error) {
+	// 判断 refreshToken 是否有效,并反查用户
+	idstr, err := s.cache.GetIDByRefresh(ctx, refreshToken)
+	if err != nil { //查找不到说明，refreshtoken 不存在/已过期/已轮换
+		return "", "", apperrors.NewAppError(http.StatusUnauthorized, "refresh token 无效或已过期")
+	}
+
+	id, _ := strconv.ParseUint(idstr, 10, 64)
+	user, err := s.repo.FindByID(ctx, uint(id))
+	if err != nil {
+		return "", "", err
+	}
+
+	// 有效，先删除原本的refresh
+	_ = s.cache.Del(ctx, s.cache.Key("refresh:%s", refreshToken))
+	_ = s.cache.Del(ctx, s.cache.Key("account:%d:refresh", user.ID))
+
+	// 有效，签发新的 access token 和 refresh token
+	accessToken, err = jwt.GenerateToken(jwt.JwtSecrete(), user.ID, user.Username)
+	if err != nil { //内部出现错误，无法加密
+		return "", "", err
+	}
+	newRefresh = jwt.GenernateRefreshToken()
+
+	// 记录redis
+	_, _ = s.cache.Set(ctx, s.cache.Key("account:%d", user.ID), accessToken, jwt.AccessTokenTTL)
+	_, _ = s.cache.Set(ctx, s.cache.Key("account:%d:refresh", user.ID), newRefresh, jwt.RefreshTokenTTL)
+	_, _ = s.cache.Set(ctx, s.cache.Key("refresh:%s", newRefresh), idstr, jwt.RefreshTokenTTL)
+
+	// refreshtoken异步写入数据库
+	// 异步写回db
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if err := s.repo.UpdateRefreshToken(ctx, user.ID, newRefresh); err != nil {
+			log.Printf("refresh token落库失败，userid:%v,err:%v", user.ID, err)
+		}
+	}()
+	// 返回token
+	return accessToken, newRefresh, nil
+
+}
+
+func (s *UserService) Logout(ctx context.Context, refreshToken string) error {
+	// 由refreshtoken反查user
+	idstr, err := s.cache.GetIDByRefresh(ctx, refreshToken)
+	if err != nil { //查找不到说明，refreshtoken 不存在/已过期/已轮换
+		return apperrors.NewAppError(http.StatusUnauthorized, "refresh token 无效或已过期")
+	}
+
+	id, _ := strconv.ParseUint(idstr, 10, 64)
+
+	// 删除user相关的token
+	_ = s.cache.Del(ctx, s.cache.Key("refresh:%s", refreshToken))
+	_ = s.cache.Del(ctx, s.cache.Key("account:%d:refresh", id))
+	_ = s.cache.Del(ctx, s.cache.Key("account:%d", id))
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if err := s.repo.UpdateRefreshToken(ctx, uint(id), ""); err != nil {
+			log.Printf("logout 清库失败，userid:%v,err:%v", id, err)
+		}
+	}()
+	return nil
 }

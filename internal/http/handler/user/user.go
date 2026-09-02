@@ -39,7 +39,25 @@ func (h *Handler) Register(c *gin.Context) {
 
 // ChangePassword 修改密码
 func (h *Handler) ChangePassword(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"msg": "change_password"})
+	var req account.ChangePasswordReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, http.StatusBadRequest, "请求参数有误")
+		return
+	}
+
+	userid, _ := c.Get("user_id")
+	userID, ok := userid.(uint)
+	if !ok {
+		response.Fail(c, http.StatusInternalServerError, "内部错误")
+		return
+	}
+
+	req.UserID = userID
+	if err := h.svc.ChangePassword(c.Request.Context(), req.UserID, req.NewPassword); err != nil {
+		response.FromError(c, err)
+		return
+	}
+	response.OK(c)
 }
 
 // GetByID 按照ID查询
@@ -67,12 +85,39 @@ func (h *Handler) Login(c *gin.Context) {
 	response.OK(c, gin.H{"access_token": accessToken, "refresh_token": refreshToken})
 }
 
-// Refresh 刷新token
+// Refresh 刷新access token 和 refresh token
 func (h *Handler) Refresh(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"msg": "refresh"})
+	// 提取header中的refresh token
+	var req account.RefreshTokenReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, http.StatusBadRequest, "请求参数有误")
+		return
+	}
+
+	// refresh
+	accessToken, refreshToken, err := h.svc.Refresh(c.Request.Context(), req.RefreshToken)
+	if err != nil {
+		response.FromError(c, err)
+		return
+	}
+
+	response.OK(c, gin.H{
+		"access_token":  accessToken,
+		"refresh_token": refreshToken,
+	})
 }
 
 // Logout 注销+服务端踢掉token
 func (h *Handler) Logout(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"msg": "logout"})
+	var req account.LogoutReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, http.StatusBadRequest, "请求参数有误")
+		return
+	}
+
+	if err := h.svc.Logout(c.Request.Context(), req.RefreshToken); err != nil {
+		response.FromError(c, err)
+		return
+	}
+	response.OK(c)
 }
