@@ -69,7 +69,7 @@ func GenerateToken(key []byte, accountID uint, username string) (string, error) 
 }
 
 // GenernateRefreshToken 签发随机的refresh token（32 字节转为16进制，变为64个字符）
-func GenernateRefreshToken() string {
+func GenerateRefreshToken() string {
 	b := make([]byte, 32)
 	rand.Read(b)
 	return hex.EncodeToString(b)

@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"feedsystem/internal/data"
 	"feedsystem/internal/model/account"
 	apperrors "feedsystem/internal/pkg/errors"
 	"feedsystem/internal/pkg/jwt"
@@ -32,14 +31,25 @@ type UserRepo interface {
 	UpdateRefreshToken(ctx context.Context, id uint, refreshtoken string) error
 }
 
+// CacheRepo the interface of cache used by service
+type CacheRepo interface {
+	Key(format string, a ...any) string
+	Get(ctx context.Context, key string) (string, error)
+	Set(ctx context.Context, key string, val any, ttl time.Duration) (string, error)
+	Del(ctx context.Context, key string) error
+	GetAccessByID(ctx context.Context, id uint) (string, error)
+	GetIDByRefresh(ctx context.Context, token string) (string, error)
+	GetRefreshByID(ctx context.Context, id uint) (string, error)
+}
+
 // UserService 账号业务服务
 type UserService struct {
 	repo  UserRepo
-	cache *data.RedisClient
+	cache CacheRepo
 }
 
 // NewUserService 构造账号服务
-func NewUserService(repo UserRepo, cache *data.RedisClient) *UserService {
+func NewUserService(repo UserRepo, cache CacheRepo) *UserService {
 	return &UserService{repo: repo, cache: cache}
 }
 
@@ -85,11 +95,11 @@ func (s *UserService) ChangePassword(ctx context.Context, id uint, newpassword s
 func (s *UserService) checkuser(ctx context.Context, username, rawPassword string) (*account.User, error) {
 	user, err := s.repo.FindByUsername(ctx, username)
 	if err != nil {
-		return nil, err
+		return nil, apperrors.NewAppError(http.StatusUnauthorized, "账号或密码错")
 	}
 
 	if !password.Verify(user.Password, rawPassword) {
-		return nil, errors.New("密码错误")
+		return nil, apperrors.NewAppError(http.StatusUnauthorized, "账号或密码错")
 	}
 
 	return user, nil
@@ -107,7 +117,7 @@ func (s *UserService) Login(ctx context.Context, username, rawPassword string) (
 	if err != nil { //内部出现错误，无法加密
 		return "", "", err
 	}
-	refreshToken := jwt.GenernateRefreshToken()
+	refreshToken := jwt.GenerateRefreshToken()
 
 	// 失效之前的token
 	if old, err := s.cache.Get(ctx, s.cache.Key("account:%d:refresh", user.ID)); err == nil && old != "" {
@@ -157,7 +167,7 @@ func (s *UserService) Refresh(ctx context.Context, refreshToken string) (accessT
 	if err != nil { //内部出现错误，无法加密
 		return "", "", err
 	}
-	newRefresh = jwt.GenernateRefreshToken()
+	newRefresh = jwt.GenerateRefreshToken()
 
 	// 记录redis
 	_, _ = s.cache.Set(ctx, s.cache.Key("account:%d", user.ID), accessToken, jwt.AccessTokenTTL)
