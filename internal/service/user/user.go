@@ -15,6 +15,8 @@ import (
 	apperrors "feedsystem/internal/pkg/errors"
 	"feedsystem/internal/pkg/jwt"
 	"feedsystem/internal/pkg/password"
+
+	"gorm.io/gorm"
 )
 
 const (
@@ -27,6 +29,7 @@ type UserRepo interface {
 	Create(ctx context.Context, u account.User) error
 	FindByUsername(ctx context.Context, username string) (*account.User, error)
 	FindByID(ctx context.Context, id uint) (*account.User, error)
+	ListByUserName(ctx context.Context, username string) ([]account.User, error)
 	UpdatePassword(ctx context.Context, id uint, password string) error
 	UpdateRefreshToken(ctx context.Context, id uint, refreshtoken string) error
 }
@@ -210,4 +213,40 @@ func (s *UserService) Logout(ctx context.Context, refreshToken string) error {
 		}
 	}()
 	return nil
+}
+
+// ListByUserName 名称模糊查询用户列表
+func (s *UserService) ListByUserName(ctx context.Context, username string) ([]account.Profile, error) {
+	if username == "" {
+		return nil, apperrors.NewAppError(http.StatusBadRequest, "参数错误")
+	}
+
+	// 查询数据库
+	users, err := s.repo.ListByUserName(ctx, username)
+	if err != nil {
+		return nil, err
+	}
+
+	// 转换为用户的简介数据返回
+	userinfo := make([]account.Profile, 0, len(users))
+
+	for _, v := range users {
+		userinfo = append(userinfo, v.ToProfile())
+	}
+	return userinfo, nil
+}
+
+func (s *UserService) GetUserByID(ctx context.Context, userid uint) (account.Profile, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+
+	user, err := s.repo.FindByID(ctx, userid)
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return account.Profile{}, apperrors.NewAppError(http.StatusNotFound, "用户不存在")
+		}
+		return account.Profile{}, err
+	}
+
+	return user.ToProfile(), nil
 }

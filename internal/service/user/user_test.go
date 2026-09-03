@@ -10,6 +10,7 @@ import (
 	pwd "feedsystem/internal/pkg/password"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -83,6 +84,20 @@ func (f *fakeRepo) UpdateRefreshToken(ctx context.Context, id uint, refreshtoken
 	f.users[id].RefreshToken = refreshtoken
 	f.refreshLog[id] = append(f.refreshLog[id], refreshtoken)
 	return nil
+}
+
+func (f *fakeRepo) ListByUserName(ctx context.Context, username string) ([]account.User, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	usermatch := []account.User{}
+	for _, v := range f.users {
+		if strings.Contains(v.Username, username) {
+			usermatch = append(usermatch, *v)
+		}
+	}
+
+	return usermatch, nil
 }
 
 func newFakeRepo() *fakeRepo {
@@ -258,4 +273,28 @@ func TestRefreshReplay(t *testing.T) {
 
 	_, _, err = svc.Refresh(ctx, rt) // 同一 rt 复用
 	requireStatus(t, err, 401)       // 防重放核心，锁死是 401 而非 500
+}
+
+func TestListByUserName(t *testing.T) {
+	// 启动test基建
+	svc, repo, _ := newTestService(t)
+	ctx := context.Background()
+
+	// 查询
+	_, err := svc.ListByUserName(ctx, "")
+	requireStatus(t, err, 400)
+
+	// 添加多个用户
+	seedUser(t, repo, 2, "sin", "123456")
+	seedUser(t, repo, 3, "sinco", "123456")
+	seedUser(t, repo, 4, "dream", "123456")
+
+	// 查询
+	profiles, err := svc.ListByUserName(ctx, "sin")
+	require.NoError(t, err)
+	require.Len(t, profiles, 2)
+
+	profiles, err = svc.ListByUserName(ctx, "xx")
+	require.NoError(t, err)
+	assert.Empty(t, profiles)
 }

@@ -6,6 +6,7 @@ import (
 	"feedsystem/internal/model/account"
 	"feedsystem/internal/service/user"
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 )
@@ -60,16 +61,6 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 	response.OK(c)
 }
 
-// GetByID 按照ID查询
-func (h *Handler) GetByID(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"msg": "get_by_id"})
-}
-
-// ListByUsername 按照username,使用query查询
-func (h *Handler) ListByUsername(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"msg": "list_by_username"})
-}
-
 // Login 用户登录
 func (h *Handler) Login(c *gin.Context) {
 	var req account.LoginReq
@@ -120,4 +111,44 @@ func (h *Handler) Logout(c *gin.Context) {
 		return
 	}
 	response.OK(c)
+}
+
+// ListByUserName 用户名称模糊匹配，需登录后使用
+func (h *Handler) ListByUserName(c *gin.Context) {
+	username := c.Query("username")
+	if username == "" {
+		response.Fail(c, http.StatusBadRequest, "请求参数有误")
+		return
+	}
+
+	userInfos, err := h.svc.ListByUserName(c.Request.Context(), username)
+	if err != nil {
+		response.FromError(c, err)
+		return
+	}
+	response.OK(c, userInfos)
+}
+
+// GetUserByID 精确查找用户信息n
+func (h *Handler) GetUserByID(c *gin.Context) {
+	ID := c.Param("id")
+	if ID == "" {
+		response.Fail(c, http.StatusBadRequest, "请求参数有误")
+		return
+
+	}
+
+	id, err := strconv.ParseUint(ID, 10, 64)
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, "请求参数有误")
+		return
+	}
+
+	userinfo, err := h.svc.GetUserByID(c.Request.Context(), uint(id))
+	if err != nil {
+		response.FromError(c, err)
+		return
+	}
+
+	response.OK(c, userinfo)
 }

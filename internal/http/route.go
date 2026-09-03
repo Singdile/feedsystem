@@ -36,8 +36,8 @@ func SetRouter(db *gorm.DB, cache *data.RedisClient) *gin.Engine {
 	userG := r.Group("/api/v1/users", authmiddle.JWTAuthMiddleWare(cache))
 	{
 		userG.PUT("/password", userHandler.ChangePassword) //修改密码
-		userG.GET("/:id", userHandler.GetByID)             //按照ID查询
-		userG.GET("", userHandler.ListByUsername)          //按照username,使用query查询
+		userG.GET("/:id", userHandler.GetUserByID)         //按照ID查询
+		userG.GET("", userHandler.ListByUserName)          //按照username,使用query查询
 	}
 
 	// 认证

@@ -54,3 +54,12 @@ func (r *userRepo) UpdatePassword(ctx context.Context, id uint, password string)
 func (r *userRepo) UpdateRefreshToken(ctx context.Context, id uint, refreshtoken string) error {
 	return r.db.WithContext(ctx).Model(&account.User{}).Where("id=?", id).Update("refresh_token", refreshtoken).Error
 }
+
+func (r *userRepo) ListByUserName(ctx context.Context, username string) ([]account.User, error) {
+	var users = []account.User{}
+	err := r.db.WithContext(ctx).Model(&account.User{}).Where("username LIKE ?", "%"+username+"%").Find(&users).Error
+	if err != nil {
+		return nil, err
+	}
+	return users, nil
+}
