@@ -21,3 +21,10 @@ rabbitmq:
   port: 5672
   username: admin
   password: password123
+
+minio:
+  endpoint: localhost:9000
+  accesskey: minioadmin
+  secretkey: minioadmin
+  usessl: false
+  bucket: feedsystem

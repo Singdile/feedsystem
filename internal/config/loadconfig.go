@@ -14,6 +14,7 @@ type Config struct {
 	DBConfig       DBConfig       `mapstructure:"db"`
 	RedisConfig    RedisConfig    `mapstructure:"redis"`
 	RabbitMQConfig RabbitMQConfig `mapstructure:"rabbitmq"`
+	MinIOConfig    MinIOConfig    `mapstructure:"minio"`
 }
 
 // AppConfig 应用自身的配置
@@ -46,6 +47,14 @@ type RabbitMQConfig struct {
 	Port     int    `mapstructure:"port"`
 	Username string `mapstructure:"username"`
 	Password string `mapstructure:"password"`
+}
+
+type MinIOConfig struct {
+	Endpoint  string `mapstructure:"endpoint"`
+	AccessKey string `mapstructure:"accesskey"`
+	SecretKey string `mapstructure:"secretkey"`
+	UseSSL    bool   `mapstructure:"usessl"`
+	Bucket    string `mapstructure:"bucket"`
 }
 
 // Conf 全局配置变量
