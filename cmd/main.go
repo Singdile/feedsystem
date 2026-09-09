@@ -44,14 +44,15 @@ func main() {
 	}
 
 	// 连接minio
-	if _, err := data.NewMinioClient(conf.MinIOConfig); err != nil {
+	mc, err := data.NewMinioClient(conf.MinIOConfig)
+	if err != nil {
 		log.Fatalf("failed to connect minio client,err: %v", err)
 	} else {
 		log.Printf("minio connect success")
 	}
 
 	// 装配路由并启动 HTTP 服务
-	router := http.SetRouter(DB, rdb)
+	router := http.SetRouter(DB, rdb, mc)
 	addr := fmt.Sprintf(":%d", conf.AppConfig.Port)
 	log.Printf("Server is running on %s", addr)
 	if err := router.Run(addr); err != nil {

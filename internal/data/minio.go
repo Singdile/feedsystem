@@ -121,3 +121,8 @@ func (m *MinioClient) CompleteMultipart(ctx context.Context, objectKey, uploadID
 func (m *MinioClient) AbortMultipart(ctx context.Context, objectKey, uploadID string) error {
 	return m.core().AbortMultipartUpload(ctx, m.bucket, objectKey, uploadID)
 }
+
+// RemoveObject 删除对象
+func (m *MinioClient) RemoveObject(ctx context.Context, objectKey string) error {
+	return m.client.RemoveObject(ctx, m.bucket, objectKey, minio.RemoveObjectOptions{})
+}

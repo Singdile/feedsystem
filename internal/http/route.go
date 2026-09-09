@@ -4,17 +4,20 @@ package http
 import (
 	"feedsystem/internal/data"
 	"feedsystem/internal/http/handler/user"
+	"feedsystem/internal/http/handler/video"
 	"feedsystem/internal/middleware/auth"
 	"feedsystem/internal/pkg/jwt"
 	userrepo "feedsystem/internal/repository/user"
+	videorepo "feedsystem/internal/repository/video"
 	usersvc "feedsystem/internal/service/user"
+	"feedsystem/internal/service/video"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
 // SetRouter 装配全部路由与中间件
-func SetRouter(db *gorm.DB, cache *data.RedisClient) *gin.Engine {
+func SetRouter(db *gorm.DB, cache *data.RedisClient, mc *data.MinioClient) *gin.Engine {
 	r := gin.Default()
 
 	// 健康检查
@@ -45,6 +48,26 @@ func SetRouter(db *gorm.DB, cache *data.RedisClient) *gin.Engine {
 	authG.POST("/login", userHandler.Login)     //用户登录
 	authG.POST("/refresh", userHandler.Refresh) //刷新token
 	authG.POST("/logout", userHandler.Logout)   //注销+服务端踢掉token
+
+	// video
+	videoRepo := videorepo.NewVideoRepo(mc, db)
+	videoSvc := videosvc.NewVideoService(videoRepo, cache)
+	videoHandler := video.NewHandler(videoSvc)
+	uploadG := r.Group("/api/v1/uploads/videos", authmiddle.JWTAuthMiddleWare(cache))
+	{
+		uploadG.POST("/init", videoHandler.Init)
+		uploadG.GET("/:uploadID/status", videoHandler.GetLoadStatus)
+		uploadG.POST("/:uploadID/complete", videoHandler.CompleteUpload)
+		uploadG.POST("/:uploadID/abort", videoHandler.AbortUpload)
+
+		uploadG.POST("/covers", videoHandler.UpLoadConver)
+		uploadG.POST("/publish", videoHandler.Publish)
+
+	}
+
+	r.GET("/api/v1/videos/:id", videoHandler.GetVideo)
+	r.GET("/api/v1/videos", videoHandler.ListVideos)
+	r.DELETE("/api/v1/videos/:id", authmiddle.JWTAuthMiddleWare(cache), videoHandler.DeleteVideo)
 
 	return r
 }
