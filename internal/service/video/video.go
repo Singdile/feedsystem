@@ -45,6 +45,7 @@ type ObjectStore interface {
 	Complete(ctx context.Context, objectKey, minioUploadID string, totalParts int) error
 	UploadCover(ctx context.Context, objectKey string, read io.Reader, size int64, contentType string) error
 	PresignedGetObject(ctx context.Context, objectKey string, expiry time.Duration) (string, error)
+	Abort(ctx context.Context, objectKey, minioUploadID string) error
 }
 
 // VideoRepo 组合接口：service 依赖它一个即可
@@ -407,6 +408,32 @@ func (s *VideoService) DeleteVideo(ctx context.Context, id uint, authorID uint) 
 	err = s.repo.RemoveObject(ctx, v.VideoKey, v.CoverKey)
 	if err != nil {
 		log.Printf("删除视频对象失败,用户:%v,视频key:%v,err:%v", authorID, v.VideoKey, err)
+	}
+	return nil
+}
+
+// AbortUpload 中断某次会话，删除已经上传的内容，删除cache缓存会话
+func (s *VideoService) AbortUpload(ctx context.Context, authorID uint, uploadID string) error {
+	if authorID == 0 || uploadID == "" {
+		return apperrors.NewAppError(http.StatusBadRequest, "参数错误")
+	}
+
+	// 获取cache 中的 session信息
+	session, err := s.checkSession(ctx, uploadID, authorID)
+	if err != nil {
+		return err
+	}
+
+	// 进行删除操作
+	err = s.repo.Abort(ctx, session.VideoKey, session.MinioUploadID)
+	if err != nil {
+		return apperrors.NewAppError(http.StatusInternalServerError, "删除失败")
+	}
+
+	// 清理cache中的session记录
+	err = s.deleteSession(ctx, uploadID, session)
+	if err != nil {
+		log.Printf("clean session err:%v", err)
 	}
 	return nil
 }

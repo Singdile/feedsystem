@@ -125,7 +125,36 @@ func (h *Handler) CompleteUpload(c *gin.Context) {
 }
 
 // AbortUpload 取消视频上传，通知minio删除之前保存的分片
-func (h *Handler) AbortUpload(c *gin.Context) {}
+// 取消一次未完成的分片上传。用户传了一部分分片、不想继续了（或传错了），调它让服务端：
+// 1. 通知 MinIO 作废该 multipart 会话（AbortMultipartUpload，丢弃已传的 part）
+// 2. 清理 Redis 双键（chunk:session / chunk:resume）
+// 3. 之后该 upload_id 失效，任何 status/complete 都会 404
+func (h *Handler) AbortUpload(c *gin.Context) {
+	// 获取 uploadID, user_id
+	uploadID := c.Param("uploadID")
+	if uploadID == "" {
+		response.Fail(c, http.StatusBadRequest, "empty uploadID")
+		return
+	}
+
+	authorID, exist := c.Get("user_id")
+	if !exist {
+		response.Fail(c, http.StatusUnauthorized, "越权取消")
+		return
+	}
+	authorId, ok := authorID.(uint)
+	if !ok {
+		response.Fail(c, http.StatusInternalServerError, "参数错误")
+		return
+	}
+
+	err := h.svc.AbortUpload(c.Request.Context(), authorId, uploadID)
+	if err != nil {
+		response.FromError(c, err)
+		return
+	}
+	response.OK(c)
+}
 
 // UpLoadConver 上传视频封面
 func (h *Handler) UpLoadConver(c *gin.Context) {

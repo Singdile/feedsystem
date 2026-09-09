@@ -157,3 +157,8 @@ func (r *videoRepo) RemoveObject(ctx context.Context, objectKey, coverKey string
 	}
 	return err2
 }
+
+// Abort 中断某次对象的上传，并删除对应的资源
+func (r *videoRepo) Abort(ctx context.Context, objectKey, minioUploadID string) error {
+	return r.mc.AbortMultipart(ctx, objectKey, minioUploadID)
+}
