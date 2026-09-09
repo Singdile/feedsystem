@@ -1,6 +1,11 @@
 package video
 
 import (
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -13,8 +18,8 @@ type Video struct {
 	Username    string         `gorm:"type:varchar(255);not null" json:"username"`
 	Title       string         `gorm:"type:varchar(255);not null" json:"title"`
 	Description string         `gorm:"type:varchar(1000);default:''" json:"description,omitempty"`
-	VideoKey    string         `gorm:"type:varchar(255);not null" json:"-"`   // 视频
-	CoverKey    string         `gorm:"type:varchar(255);default:''" json:"-"` // 封面
+	VideoKey    string         `gorm:"type:varchar(255);not null" json:"-"` // 视频
+	CoverKey    string         `gorm:"type:varchar(255);not null" json:"-"` // 封面
 	CreatedAt   time.Time      `gorm:"autoCreateTime" json:"created_at"`
 	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
 }
@@ -75,4 +80,46 @@ type PublishResp struct {
 type CoverResp struct {
 	CoverKey   string `json:"cover_key"`
 	PreviewURL string `json:"preview_url"`
+}
+
+type VideoView struct {
+	ID          uint      `json:"id"`
+	Title       string    `json:"title"`
+	Description string    `json:"description,omitempty"`
+	Author      Author    `json:"author"`
+	PlayURL     string    `json:"play_url"`
+	CoverURL    string    `json:"cover_url,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// Cursor 游标：上一页最后一条的 (created_at, id)
+type Cursor struct {
+	CreatedAt time.Time
+	ID        uint
+}
+
+// EncodeCursor 采用base64编码，每6bit映射为对应的字符
+func EncodeCursor(cursor Cursor) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf("%d,%d", cursor.CreatedAt.UnixMilli(), cursor.ID)))
+}
+
+// DecodeCursor 解析cursorStr为cursor
+func DecodeCursor(cursorStr string) (Cursor, error) {
+	b, err := base64.RawURLEncoding.DecodeString(cursorStr)
+	if err != nil {
+		return Cursor{}, err
+	}
+	parts := strings.SplitN(string(b), ",", 2)
+	if len(parts) != 2 {
+		return Cursor{}, errors.New("Invalid cursor")
+	}
+	ms, _ := strconv.ParseInt(parts[0], 10, 64)
+	id, _ := strconv.ParseUint(parts[1], 10, 64)
+	if ms == 0 || id == 0 {
+		return Cursor{}, errors.New("Invalid cursor")
+	}
+	return Cursor{
+		CreatedAt: time.UnixMilli(ms),
+		ID:        uint(id),
+	}, nil
 }

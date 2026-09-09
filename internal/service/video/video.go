@@ -23,11 +23,14 @@ const (
 	sessionTTL            = 24 * time.Hour
 	coverMax        int64 = 10 << 20         // 图片最大上传10MB
 	coverPreviewTTL       = 15 * time.Minute // 图片预览链接有效时长
+	playExpiry            = time.Hour
 )
 
 // VideoDB 数据库存储操作
 type VideoDB interface {
 	Create(ctx context.Context, v *video.Video) (*video.Video, error)
+	FindByID(ctx context.Context, id uint) (*video.Video, error)
+	List(ctx context.Context, authorID uint, cursor *video.Cursor, limit int) ([]video.Video, error)
 }
 
 // ObjectStore 对象存储操作
@@ -39,18 +42,18 @@ type ObjectStore interface {
 	PresignedGetObject(ctx context.Context, objectKey string, expiry time.Duration) (string, error)
 }
 
-// 组合接口：service 依赖它一个即可
-type VideRepo interface {
+// VideoRepo 组合接口：service 依赖它一个即可
+type VideoRepo interface {
 	ObjectStore
 	VideoDB
 }
 
 type VideoService struct {
-	repo  VideRepo
+	repo  VideoRepo
 	cache ChunkCache
 }
 
-func NewVideoService(repo VideRepo, cache ChunkCache) *VideoService {
+func NewVideoService(repo VideoRepo, cache ChunkCache) *VideoService {
 	return &VideoService{repo: repo, cache: cache}
 }
 
@@ -263,4 +266,106 @@ func (s *VideoService) UploadCover(ctx context.Context, authorID uint, filename 
 	}
 	// 返回
 	return objectKey, url, nil
+}
+
+// 抽公共方法（GetVideo 也改用它）
+func (s *VideoService) videoView(ctx context.Context, v *video.Video) (*video.VideoView, error) {
+	play, err := s.repo.PresignedGetObject(ctx, v.VideoKey, playExpiry)
+	if err != nil {
+		return nil, apperrors.NewAppError(http.StatusInternalServerError, "生成播放地址失败")
+	}
+	if v.CoverKey == "" {
+		return nil, apperrors.NewAppError(http.StatusInternalServerError, "封面数据缺失")
+	} // 强制封面
+	cover, err := s.repo.PresignedGetObject(ctx, v.CoverKey, playExpiry)
+	if err != nil {
+		return nil, apperrors.NewAppError(http.StatusInternalServerError, "生成封面地址失败")
+	}
+
+	return &video.VideoView{
+		ID:          v.ID,
+		Title:       v.Title,
+		Description: v.Description,
+		Author: video.Author{
+			ID:       v.AuthorID,
+			Username: v.Username,
+		},
+		PlayURL:   play,
+		CoverURL:  cover,
+		CreatedAt: v.CreatedAt,
+	}, nil
+}
+
+// GetVideo 根据数据库中的视频ID,返回该视频的播放信息
+func (s *VideoService) GetVideo(ctx context.Context, id uint) (*video.VideoView, error) {
+	if id == 0 {
+		return nil, apperrors.NewAppError(http.StatusBadRequest, "参数错误")
+	}
+
+	got, err := s.repo.FindByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.videoView(ctx, got)
+}
+
+// ListResult 分页结果
+type ListResult struct {
+	Items      []*video.VideoView `json:"items"`
+	NextCursor string             `json:"next_cursor"` // 空串 = 没有更多
+}
+
+// ListVideos 根据用户id,分页游标，limit返回视频信息列表
+func (s *VideoService) ListVideos(ctx context.Context, authorID uint, cursorStr string, limit int) (*ListResult, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	// 解析cursorStr
+	var cursor *video.Cursor
+	if cursorStr != "" {
+		c, err := video.DecodeCursor(cursorStr)
+		if err != nil {
+			return nil, apperrors.NewAppError(http.StatusBadRequest, "游标无效")
+		}
+		cursor = &c
+	}
+
+	// 调用repo
+	v, err := s.repo.List(ctx, authorID, cursor, limit+1) //多取一条，判断是否有下一页
+	if err != nil {
+		return nil, apperrors.NewAppError(http.StatusInternalServerError, "查询列表失败")
+	}
+
+	hasmore := len(v) > limit
+	if hasmore {
+		v = v[:limit]
+	}
+
+	nextCursorStr := ""
+	if len(v) > 0 && hasmore {
+		next := video.Cursor{
+			CreatedAt: v[len(v)-1].CreatedAt,
+			ID:        v[len(v)-1].ID,
+		}
+		nextCursorStr = video.EncodeCursor(next)
+	}
+
+	// 构造videoView列表返回
+	videoViews := make([]*video.VideoView, len(v))
+	for i := range v {
+		videoViews[i], err = s.videoView(ctx, &v[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return &ListResult{
+		Items:      videoViews,
+		NextCursor: nextCursorStr,
+	}, nil
 }

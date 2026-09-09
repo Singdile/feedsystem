@@ -7,6 +7,7 @@ import (
 	"feedsystem/internal/model/video"
 	videosvc "feedsystem/internal/service/video"
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 )
@@ -229,11 +230,40 @@ func (h *Handler) Publish(c *gin.Context) {
 	})
 }
 
-// GetVideo 获取视频playurl
-func (h *Handler) GetVideo(c *gin.Context) {}
+// GetVideo 任何人拿到视频 id，就返回这条视频的完整可播放信息
+func (h *Handler) GetVideo(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, "参数错误")
+		return
+	}
+	view, err := h.svc.GetVideo(c.Request.Context(), uint(id))
+	if err != nil {
+		response.FromError(c, err)
+		return
+	}
+	response.OK(c, view)
+}
 
-// ListVideos 按照时间倒序展示用户视频
-func (h *Handler) ListVideos(c *gin.Context) {}
+// ListVideos 按照时间倒序展示用户视频,采用游标分页
+// 参数： 查询的用户id,分页游标cursor_str,显示个数limit
+// 返回： 返回一组视频可播放信息
+func (h *Handler) ListVideos(c *gin.Context) {
+	authorID, _ := strconv.ParseUint(c.Query("author_id"), 10, 64) // 0=全站
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	cursor := c.Query("cursor")
+	if limit < 0 {
+		response.Fail(c, 400, "参数错误")
+		return
+	}
+
+	res, err := h.svc.ListVideos(c.Request.Context(), uint(authorID), cursor, limit)
+	if err != nil {
+		response.FromError(c, err)
+		return
+	}
+	response.OK(c, res)
+}
 
 // DeleteVideo 用户指定删除自己的视频
 func (h *Handler) DeleteVideo(c *gin.Context) {}

@@ -3,6 +3,7 @@ package video
 
 import (
 	"context"
+	"errors"
 	"feedsystem/internal/data"
 	"feedsystem/internal/model/video"
 	"io"
@@ -116,4 +117,28 @@ func (r *videoRepo) UploadCover(ctx context.Context, objectKey string, read io.R
 // PresignedGetObject 获取照片数据的预览链接
 func (r *videoRepo) PresignedGetObject(ctx context.Context, objectKey string, expiry time.Duration) (string, error) {
 	return r.mc.PresignedGetObject(ctx, objectKey, expiry)
+}
+
+// FindByID 查找视频信息
+func (r *videoRepo) FindByID(ctx context.Context, id uint) (*video.Video, error) {
+	if id == 0 {
+		return nil, errors.New("invalid video id")
+	}
+
+	v := &video.Video{}
+	res := r.db.WithContext(ctx).First(v, id)
+	return v, res.Error
+}
+
+func (r *videoRepo) List(ctx context.Context, authorID uint, cursor *video.Cursor, limit int) ([]video.Video, error) {
+	items := []video.Video{}
+	q := r.db.Model(&video.Video{})
+	if authorID != 0 {
+		q = q.Where("author_id = ?", authorID)
+	}
+	if cursor != nil {
+		q = q.Where("(created_at < ?) OR (created_at = ? AND id < ?)", cursor.CreatedAt, cursor.CreatedAt, cursor.ID)
+	}
+	res := q.Order("created_at DESC, id DESC").Limit(limit).Find(&items)
+	return items, res.Error
 }
