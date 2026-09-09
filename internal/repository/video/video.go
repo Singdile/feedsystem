@@ -142,3 +142,18 @@ func (r *videoRepo) List(ctx context.Context, authorID uint, cursor *video.Curso
 	res := q.Order("created_at DESC, id DESC").Limit(limit).Find(&items)
 	return items, res.Error
 }
+
+// Delete 注意：实体带 DeletedAt，gorm .Delete 默认是软删；硬删必须 Unscoped
+func (r *videoRepo) Delete(ctx context.Context, id uint) error {
+	return r.db.WithContext(ctx).Unscoped().Delete(&video.Video{}, id).Error
+}
+
+// RemoveObject 删除视频对象以及对应的封面
+func (r *videoRepo) RemoveObject(ctx context.Context, objectKey, coverKey string) error {
+	err1 := r.mc.RemoveObject(ctx, objectKey)
+	err2 := r.mc.RemoveObject(ctx, coverKey)
+	if err1 != nil {
+		return err1
+	}
+	return err2
+}

@@ -266,4 +266,33 @@ func (h *Handler) ListVideos(c *gin.Context) {
 }
 
 // DeleteVideo 用户指定删除自己的视频
-func (h *Handler) DeleteVideo(c *gin.Context) {}
+func (h *Handler) DeleteVideo(c *gin.Context) {
+	// 获取视频id
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, "参数错误")
+		return
+	}
+
+	// 获取用户id
+	authorID, exist := c.Get("user_id")
+	if !exist {
+		response.Fail(c, http.StatusBadRequest, "未授权")
+		return
+	}
+	authorId, ok := authorID.(uint)
+	if !ok {
+		response.Fail(c, http.StatusBadRequest, "未授权")
+		return
+	}
+
+	// 执行删除业务
+	err = h.svc.DeleteVideo(c.Request.Context(), uint(id), authorId)
+	if err != nil {
+		response.FromError(c, err)
+		return
+	}
+
+	// 返回响应
+	response.OK(c, nil)
+}

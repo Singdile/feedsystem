@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"feedsystem/internal/model/video"
 	apperrors "feedsystem/internal/pkg/errors"
 	"fmt"
@@ -15,6 +16,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 const (
@@ -31,6 +34,8 @@ type VideoDB interface {
 	Create(ctx context.Context, v *video.Video) (*video.Video, error)
 	FindByID(ctx context.Context, id uint) (*video.Video, error)
 	List(ctx context.Context, authorID uint, cursor *video.Cursor, limit int) ([]video.Video, error)
+	Delete(ctx context.Context, id uint) error
+	RemoveObject(ctx context.Context, videoKey, coverKey string) error
 }
 
 // ObjectStore 对象存储操作
@@ -304,7 +309,10 @@ func (s *VideoService) GetVideo(ctx context.Context, id uint) (*video.VideoView,
 
 	got, err := s.repo.FindByID(ctx, id)
 	if err != nil {
-		return nil, err
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, apperrors.NewAppError(http.StatusNotFound, "视频不存在")
+		}
+		return nil, apperrors.NewAppError(http.StatusInternalServerError, "查询视频失败")
 	}
 
 	return s.videoView(ctx, got)
@@ -368,4 +376,37 @@ func (s *VideoService) ListVideos(ctx context.Context, authorID uint, cursorStr 
 		Items:      videoViews,
 		NextCursor: nextCursorStr,
 	}, nil
+}
+
+func (s *VideoService) DeleteVideo(ctx context.Context, id uint, authorID uint) error {
+	if id <= 0 {
+		return apperrors.NewAppError(http.StatusBadRequest, "参数错误")
+	}
+
+	// 验证该视频是否是该用户的
+	v, err := s.repo.FindByID(ctx, id)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return apperrors.NewAppError(http.StatusNotFound, "视频不存在")
+		}
+		return apperrors.NewAppError(http.StatusInternalServerError, "查询视频失败")
+	}
+
+	if v.AuthorID != authorID {
+		return apperrors.NewAppError(http.StatusUnauthorized, "无权限进行该操作")
+	}
+
+	// 进行数据删除操作
+	err = s.repo.Delete(ctx, id)
+	if err != nil {
+		log.Printf("删除视频记录失败，用户:%v，视频ID:%v", authorID, id)
+		return apperrors.NewAppError(http.StatusInternalServerError, "内部错误，删除失败")
+	}
+
+	// 进行对象数据删除操作,尽力删除
+	err = s.repo.RemoveObject(ctx, v.VideoKey, v.CoverKey)
+	if err != nil {
+		log.Printf("删除视频对象失败,用户:%v,视频key:%v,err:%v", authorID, v.VideoKey, err)
+	}
+	return nil
 }
