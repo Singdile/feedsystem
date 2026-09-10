@@ -3,7 +3,9 @@ package data
 import (
 	"context"
 	"feedsystem/internal/config"
+	"feedsystem/internal/model/feed"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -73,4 +75,53 @@ func (c *RedisClient) Set(ctx context.Context, key string, val any, ttl time.Dur
 func (c *RedisClient) Del(ctx context.Context, key string) error {
 	_, err := c.rdb.Del(ctx, key).Result()
 	return err
+}
+
+func (c *RedisClient) ZRevRangeByScore(ctx context.Context, key string, maxScore float64, maxID uint, limit int) ([]feed.ZMember, error) {
+	max := "+inf"
+	if maxScore > 0 {
+		max = strconv.FormatFloat(maxScore, 'f', -1, 64)
+	}
+
+	res, err := c.rdb.ZRangeArgsWithScores(ctx, redis.ZRangeArgs{
+		Key:     key,
+		Start:   max,
+		Stop:    "-inf",
+		ByScore: true,
+		ByLex:   false,
+		Rev:     true,
+		Offset:  0,
+		Count:   int64(limit * 2), //冗余拿取
+	}).Result()
+
+	if err != nil {
+		return nil, err
+	}
+
+	// 二次过滤
+	out := make([]feed.ZMember, 0, len(res))
+
+	for _, m := range res {
+		score := m.Score
+		member, ok := m.Member.(string)
+		if !ok {
+			member = fmt.Sprintf("%v", m.Member)
+		}
+
+		// 再次筛选，去除比游标位置更新的(score更大的，videoID更大的)
+		id, _ := strconv.ParseUint(member, 10, 64)
+		if maxScore > 0 && (score > maxScore || uint(id) >= maxID) {
+			continue
+		}
+		out = append(out, feed.ZMember{
+			Score:  score,
+			Member: member,
+		})
+
+		if len(out) >= limit {
+			break
+		}
+	}
+
+	return out, nil
 }

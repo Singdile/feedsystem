@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"feedsystem/internal/data"
+	"feedsystem/internal/model/feed"
 	"feedsystem/internal/model/video"
 	"io"
 	"time"
@@ -108,6 +109,32 @@ func (r *videoRepo) Create(ctx context.Context, v *video.Video) (*video.Video, e
 	return v, err
 }
 
+// CreateWithOutbox 数据库中创建视频元数据记录并将发布信息放到outbox表
+func (r *videoRepo) CreateWithOutbox(ctx context.Context, v *video.Video) (*video.Video, error) {
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 在事务中执行一些 db 操作（从这里开始，您应该使用 'tx' 而不是 'db'）
+		if err := tx.Create(v).Error; err != nil {
+			// 返回任何错误都会回滚事务
+			return err
+		}
+
+		var m *feed.OutboxMsg
+		m = &feed.OutboxMsg{
+			VideoID:   v.ID,
+			EventType: "publish",
+			Status:    "pending",
+		}
+		if err := tx.Create(m).Error; err != nil {
+			return err
+		}
+
+		// 返回 nil 提交事务
+		return nil
+	})
+
+	return v, err
+}
+
 // UploadCover 上传照片数据到对象数据库
 func (r *videoRepo) UploadCover(ctx context.Context, objectKey string, read io.Reader, size int64, contentType string) error {
 	_, err := r.mc.PutObject(ctx, objectKey, read, size, contentType)
@@ -161,4 +188,34 @@ func (r *videoRepo) RemoveObject(ctx context.Context, objectKey, coverKey string
 // Abort 中断某次对象的上传，并删除对应的资源
 func (r *videoRepo) Abort(ctx context.Context, objectKey, minioUploadID string) error {
 	return r.mc.AbortMultipart(ctx, objectKey, minioUploadID)
+}
+
+// GetVideosByIDs 接受id数组，返回视频信息数组
+func (r *videoRepo) GetVideosByIDs(ctx context.Context, ids []uint) ([]video.Video, error) {
+	if len(ids) == 0 {
+		return []video.Video{}, nil
+	}
+
+	var items []video.Video
+	err := r.db.WithContext(ctx).Find(&items, "id IN (?)", ids).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	// 按照ids的顺序返回
+	byID := make(map[uint]video.Video)
+	for _, v := range items {
+		byID[v.ID] = v
+	}
+
+	out := make([]video.Video, 0, len(ids))
+	for _, id := range ids {
+		v, ok := byID[id]
+		if ok {
+			out = append(out, v)
+		}
+	}
+
+	return out, nil
 }

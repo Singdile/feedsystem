@@ -3,12 +3,15 @@ package http
 
 import (
 	"feedsystem/internal/data"
+	"feedsystem/internal/http/handler/feed"
 	"feedsystem/internal/http/handler/user"
 	"feedsystem/internal/http/handler/video"
 	"feedsystem/internal/middleware/auth"
 	"feedsystem/internal/pkg/jwt"
+	feedrepo "feedsystem/internal/repository/feed"
 	userrepo "feedsystem/internal/repository/user"
 	videorepo "feedsystem/internal/repository/video"
+	feedsvc "feedsystem/internal/service/feed"
 	usersvc "feedsystem/internal/service/user"
 	"feedsystem/internal/service/video"
 
@@ -69,5 +72,11 @@ func SetRouter(db *gorm.DB, cache *data.RedisClient, mc *data.MinioClient) *gin.
 	r.GET("/api/v1/videos", videoHandler.ListVideos)
 	r.DELETE("/api/v1/videos/:id", authmiddle.JWTAuthMiddleWare(cache), videoHandler.DeleteVideo)
 
+	// feed
+	feedRepo := feedrepo.NewFeedRepo(cache, db)
+	feedSvc := feedsvc.NewFeedService(feedRepo, videoSvc)
+	feedHandler := feed.NewHandler(feedSvc)
+	r.GET("/api/v1/feed", feedHandler.ListFeed)
+	
 	return r
 }

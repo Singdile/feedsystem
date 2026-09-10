@@ -32,7 +32,9 @@ const (
 // VideoDB 数据库存储操作
 type VideoDB interface {
 	Create(ctx context.Context, v *video.Video) (*video.Video, error)
+	CreateWithOutbox(ctx context.Context, v *video.Video) (*video.Video, error)
 	FindByID(ctx context.Context, id uint) (*video.Video, error)
+	GetVideosByIDs(ctx context.Context, ids []uint) ([]video.Video, error)
 	List(ctx context.Context, authorID uint, cursor *video.Cursor, limit int) ([]video.Video, error)
 	Delete(ctx context.Context, id uint) error
 	RemoveObject(ctx context.Context, videoKey, coverKey string) error
@@ -220,24 +222,24 @@ func (s *VideoService) deleteSession(ctx context.Context, uploadID string, sessi
 }
 
 // Publish 提交video的元数据到数据库
-func (s *VideoService) Publish(ctx context.Context, video *video.Video) (*video.Video, error) {
-	if video == nil {
+func (s *VideoService) Publish(ctx context.Context, v *video.Video) (*video.Video, error) {
+	if v == nil {
 		return nil, apperrors.NewAppError(http.StatusBadRequest, "参数有问题")
 	}
 
-	if strings.TrimSpace(video.Title) == "" {
+	if strings.TrimSpace(v.Title) == "" {
 		return nil, apperrors.NewAppError(http.StatusBadRequest, "标题不能为空")
 	}
 
-	if !strings.HasPrefix(video.VideoKey, fmt.Sprintf("videos/%d/", video.AuthorID)) {
+	if !strings.HasPrefix(v.VideoKey, fmt.Sprintf("videos/%d/", v.AuthorID)) {
 		return nil, apperrors.NewAppError(http.StatusBadRequest, "video_key 归属不符") // 归属业务规则
 	}
 
-	if !strings.HasPrefix(video.CoverKey, fmt.Sprintf("covers/%d/", video.AuthorID)) {
+	if !strings.HasPrefix(v.CoverKey, fmt.Sprintf("covers/%d/", v.AuthorID)) {
 		return nil, apperrors.NewAppError(http.StatusBadRequest, "cover_key 归属不符")
 	}
 
-	return s.repo.Create(ctx, video)
+	return s.repo.CreateWithOutbox(ctx, v)
 }
 
 // UploadCover 提交图片数据到对象数据库中，返回对象键以及预览地址
@@ -436,4 +438,21 @@ func (s *VideoService) AbortUpload(ctx context.Context, authorID uint, uploadID 
 		log.Printf("clean session err:%v", err)
 	}
 	return nil
+}
+
+// GetVideosByIDs 导出（videoView 现签）
+func (s *VideoService) GetVideosByIDs(ctx context.Context, ids []uint) ([]*video.VideoView, error) {
+	vs, err := s.repo.GetVideosByIDs(ctx, ids)
+	if err != nil {
+		return nil, apperrors.NewAppError(http.StatusInternalServerError, "查询视频失败")
+	}
+	views := make([]*video.VideoView, 0, len(vs))
+	for i := range vs {
+		v, err := s.videoView(ctx, &vs[i])
+		if err != nil {
+			return nil, err
+		}
+		views = append(views, v)
+	}
+	return views, nil
 }
