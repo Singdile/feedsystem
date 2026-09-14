@@ -14,6 +14,7 @@ import (
 	"log"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -50,6 +51,10 @@ type ObjectStore interface {
 	Abort(ctx context.Context, objectKey, minioUploadID string) error
 }
 
+type TimelineCleaner interface {
+	ZRem(ctx context.Context, key string, member string) error
+}
+
 // VideoRepo 组合接口：service 依赖它一个即可
 type VideoRepo interface {
 	ObjectStore
@@ -57,12 +62,13 @@ type VideoRepo interface {
 }
 
 type VideoService struct {
-	repo  VideoRepo
-	cache ChunkCache
+	repo     VideoRepo
+	cache    ChunkCache
+	timeline TimelineCleaner
 }
 
-func NewVideoService(repo VideoRepo, cache ChunkCache) *VideoService {
-	return &VideoService{repo: repo, cache: cache}
+func NewVideoService(repo VideoRepo, cache ChunkCache, timeline TimelineCleaner) *VideoService {
+	return &VideoService{repo: repo, cache: cache, timeline: timeline}
 }
 
 type ChunkCache interface {
@@ -410,6 +416,14 @@ func (s *VideoService) DeleteVideo(ctx context.Context, id uint, authorID uint) 
 	err = s.repo.RemoveObject(ctx, v.VideoKey, v.CoverKey)
 	if err != nil {
 		log.Printf("删除视频对象失败,用户:%v,视频key:%v,err:%v", authorID, v.VideoKey, err)
+	}
+
+	// 进行redis中的 feed:global_timeline 删除
+	if s.timeline != nil {
+		err := s.timeline.ZRem(ctx, "feed:global_timeline", strconv.FormatUint(uint64(v.ID), 10))
+		if err != nil {
+			log.Printf("delete timeline:%v,err:%v", v.ID, err)
+		}
 	}
 	return nil
 }

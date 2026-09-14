@@ -88,7 +88,7 @@ func (s *FeedService) ListFeed(ctx context.Context, cursorStr string, limit int)
 	}
 
 	if len(videoViews) == 0 {
-		return &FeedListResult{}, nil
+		return &FeedListResult{Items: []video.VideoView{}}, nil
 	}
 	items := make([]video.VideoView, 0, len(videoViews))
 	for _, v := range videoViews {

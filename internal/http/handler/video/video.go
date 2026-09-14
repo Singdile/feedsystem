@@ -323,5 +323,5 @@ func (h *Handler) DeleteVideo(c *gin.Context) {
 	}
 
 	// 返回响应
-	response.OK(c, nil)
+	response.OK(c)
 }

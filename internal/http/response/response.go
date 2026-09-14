@@ -15,6 +15,10 @@ type Body struct {
 }
 
 func OK(c *gin.Context, data ...any) {
+	if data == nil {
+		data = []any{}
+	}
+
 	c.JSON(http.StatusOK, Body{
 		Code: 0,
 		Msg:  "ok",
@@ -23,6 +27,9 @@ func OK(c *gin.Context, data ...any) {
 }
 
 func Fail(c *gin.Context, status int, msg string, data ...any) {
+	if data == nil {
+		data = []any{}
+	}
 	c.JSON(status, Body{
 		Code: status,
 		Msg:  msg,
