@@ -177,3 +177,18 @@ func (c *RedisClient) ZRemRangeByRank(ctx context.Context, key string, start, st
 func (c *RedisClient) ZRem(ctx context.Context, key string, member string) error {
 	return c.rdb.ZRem(ctx, key, member).Err()
 }
+
+// MGet 批量读取多个key的元素
+func (c *RedisClient) MGet(ctx context.Context, keys ...string) ([]any, error) {
+	return c.rdb.MGet(ctx, keys...).Result()
+}
+
+// GetBytes 读取 key 的字节内容
+func (c *RedisClient) GetBytes(ctx context.Context, key string) ([]byte, error) {
+	return c.rdb.Get(ctx, key).Bytes()
+}
+
+// SetBytes 写入字节内容（带TTL）
+func (c *RedisClient) SetBytes(ctx context.Context, key string, bytes []byte, ttl time.Duration) error {
+	return c.rdb.Set(ctx, key, bytes, ttl).Err()
+}
