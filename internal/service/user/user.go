@@ -116,7 +116,7 @@ func (s *UserService) Login(ctx context.Context, username, rawPassword string) (
 	}
 
 	// 用户存在，更新access-token,refresh-token
-	accessToken, err := jwt.GenerateToken(jwt.JwtSecrete(), user.ID, user.Username)
+	accessToken, err := jwt.GenerateToken(jwt.SetSecret(""), user.ID, user.Username)
 	if err != nil { //内部出现错误，无法加密
 		return "", "", err
 	}
@@ -166,7 +166,7 @@ func (s *UserService) Refresh(ctx context.Context, refreshToken string) (accessT
 	_ = s.cache.Del(ctx, s.cache.Key("account:%d:refresh", user.ID))
 
 	// 有效，签发新的 access token 和 refresh token
-	accessToken, err = jwt.GenerateToken(jwt.JwtSecrete(), user.ID, user.Username)
+	accessToken, err = jwt.GenerateToken(jwt.SetSecret(""), user.ID, user.Username)
 	if err != nil { //内部出现错误，无法加密
 		return "", "", err
 	}

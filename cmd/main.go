@@ -81,7 +81,7 @@ func main() {
 	}
 
 	// 装配路由并启动 HTTP 服务
-	router := http.SetRouter(DB, rdb, mc)
+	router := http.SetRouter(DB, rdb, mc, conf.JwtConfig)
 	addr := fmt.Sprintf(":%d", conf.AppConfig.Port)
 	log.Printf("Server is running on %s", addr)
 	if err := router.Run(addr); err != nil {

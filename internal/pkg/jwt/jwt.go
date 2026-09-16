@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"log"
-	"os"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -27,22 +26,27 @@ type CustomClaims struct {
 
 var cachedSecret []byte
 
-// JwtSecrete 返回签名密钥（优先 JWT_SECRET，缺省生成随机并警告）
-func JwtSecrete() []byte {
-	if cachedSecret != nil {
-		return cachedSecret
-	}
-	secret := os.Getenv("JWT_SECRET")
+// SetSecret 设置 JWT 签名密钥并返回其字节；
+// 传空串时返回当前已设置的密钥（未设置则生成随机）。
+// 路由装配时用配置值注入，签发/校验通过其返回值保持同一种子，重启后 token 不失效。
+func SetSecret(secret string) []byte {
+	// 传入参数为空：返回当前已设置的 secret；未设置则生成随机
 	if secret == "" {
+		if cachedSecret != nil {
+			return cachedSecret
+		}
+
 		b := make([]byte, 32)
 		if _, err := rand.Read(b); err != nil {
 			log.Printf("jwt: cannot generate secret: %v", err)
 			cachedSecret = []byte("fallback-unsafe-key")
 			return cachedSecret
 		}
-		secret = hex.EncodeToString(b)
-		log.Printf("jwt: JWT_SECRET not set, generated random key. Tokens invalid after restart.")
+		cachedSecret = b
+		return cachedSecret
 	}
+
+	// 传入参数不为空：使用该参数作为 secret
 	cachedSecret = []byte(secret)
 	return cachedSecret
 }

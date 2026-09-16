@@ -2,6 +2,7 @@
 package http
 
 import (
+	"feedsystem/internal/config"
 	"feedsystem/internal/data"
 	"feedsystem/internal/http/handler/feed"
 	"feedsystem/internal/http/handler/user"
@@ -20,7 +21,7 @@ import (
 )
 
 // SetRouter 装配全部路由与中间件
-func SetRouter(db *gorm.DB, cache *data.RedisClient, mc *data.MinioClient) *gin.Engine {
+func SetRouter(db *gorm.DB, cache *data.RedisClient, mc *data.MinioClient, secret config.JwtConfig) *gin.Engine {
 	r := gin.Default()
 
 	// 健康检查
@@ -29,7 +30,7 @@ func SetRouter(db *gorm.DB, cache *data.RedisClient, mc *data.MinioClient) *gin.
 	})
 
 	// 中间件装配
-	authmiddle := auth.NewAuthSecret(jwt.JwtSecrete())
+	authmiddle := auth.NewAuthSecret(jwt.SetSecret(secret.Secret))
 
 	// 依赖注入，装配
 	userRepo := userrepo.NewuserRepo(db)

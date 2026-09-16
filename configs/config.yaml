@@ -28,3 +28,6 @@ minio:
   secretkey: minioadmin
   usessl: false
   bucket: feedsystem
+
+jwt:
+  secret: feedvideo

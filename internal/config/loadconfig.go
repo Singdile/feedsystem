@@ -15,6 +15,7 @@ type Config struct {
 	RedisConfig    RedisConfig    `mapstructure:"redis"`
 	RabbitMQConfig RabbitMQConfig `mapstructure:"rabbitmq"`
 	MinIOConfig    MinIOConfig    `mapstructure:"minio"`
+	JwtConfig      JwtConfig      `mapstructure:"jwt"`
 }
 
 // AppConfig 应用自身的配置
@@ -55,6 +56,10 @@ type MinIOConfig struct {
 	SecretKey string `mapstructure:"secretkey"`
 	UseSSL    bool   `mapstructure:"usessl"`
 	Bucket    string `mapstructure:"bucket"`
+}
+
+type JwtConfig struct {
+	Secret string `mapstructure:"secret"`
 }
 
 // Conf 全局配置变量
