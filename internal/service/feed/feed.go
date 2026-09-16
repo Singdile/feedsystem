@@ -111,14 +111,24 @@ func (s *FeedService) ListFeed(ctx context.Context, cursorStr string, limit int)
 		return s.rebuildAndRetry(ctx, cursorStr, cursor, limit)
 	}
 
-	// 查询缓存中的timeline,获取时间排序的视频
-	members, err := s.repo.ZRevRangeByScore(ctx, "feed:global_timeline", curScore, curID, limit+1)
+	watermark := tail[0].Score // 冷热数据分界线
+	reqTime := float64(time.Now().UnixMilli())
+	if cursor != nil {
+		reqTime = float64(cursor.CreatedAt.UnixMilli())
+	}
+
+	if reqTime <= watermark { // 请求的时间比热门最老的视频还要老，那么直接查询DB,不写回ZSET
+		return s.listLatestFromDB(ctx, cursor, limit)
+	}
+
+	// 热数据路径，查询缓存中的timeline,获取时间排序的视频
+	members, err := s.repo.ZRevRangeByScore(ctx, timelineKey, curScore, curID, limit+1)
 	if err != nil {
 		return s.listLatestFromDB(ctx, cursor, limit)
 	}
 
-	hasmore := len(members) > limit
-	if hasmore {
+	hotMore := len(members) > limit
+	if hotMore {
 		members = members[:limit]
 	}
 
@@ -132,28 +142,47 @@ func (s *FeedService) ListFeed(ctx context.Context, cursorStr string, limit int)
 		ids = append(ids, uint(videID))
 	}
 
-	// nextcursor
-	next := ""
-	if hasmore {
-		last := members[len(members)-1]
-		id, _ := strconv.ParseUint(last.Member, 10, 64)
-		next = video.EncodeCursor(video.Cursor{CreatedAt: time.UnixMilli(int64(last.Score)), ID: uint(id)})
-	}
-
 	//查找三级缓存，获取视频实体信息
 	entities, err := s.GetVideoByIDs(ctx, ids)
 	if err != nil {
 		return nil, apperrors.NewAppError(http.StatusInternalServerError, "get video failed")
 	}
 
+	// 冷热缝合
+	hasMore := hotMore
+	if !hotMore && len(entities) < limit { // 只有热点数据用完并且不满页的时候，会从DB冷区取出数据
+		coldCursor := cursor
+		if len(entities) > 0 {
+			last := entities[len(entities)-1]
+			coldCursor = &video.Cursor{
+				CreatedAt: last.CreatedAt,
+				ID:        last.ID,
+			}
+		}
+
+		remain := limit - len(entities)
+		cold, err := s.repo.ListLatest(ctx, coldCursor, remain+1)
+		if err == nil {
+			coldMore := len(cold) > remain
+			if coldMore {
+				cold = cold[:remain]
+			}
+			entities = append(entities, cold...)
+			hasMore = coldMore
+		}
+	}
+
+	// next_cursor
+	next := ""
+	if hasMore && len(entities) > 0 {
+		last := entities[len(entities)-1]
+		next = video.EncodeCursor(video.Cursor{CreatedAt: last.CreatedAt, ID: last.ID})
+	}
+
 	// sign url
 	videoViews, err := s.videoSvc.BuildViews(ctx, entities)
 	if err != nil {
 		return nil, apperrors.NewAppError(http.StatusInternalServerError, "get videos failed")
-	}
-
-	if len(videoViews) == 0 {
-		return &FeedListResult{Items: []video.VideoView{}}, nil
 	}
 
 	return &FeedListResult{Items: videoViews, NextCursor: next}, nil
@@ -286,8 +315,6 @@ func (s *FeedService) listLatestFromDB(ctx context.Context, cursor *video.Cursor
 		s.localcache.Set(key, v, l1CacheTTL)
 	}
 
-	// 清理feed:global_time
-
 	// nextcursor
 	nextCursor := ""
 	if hasmore {
@@ -302,7 +329,7 @@ func (s *FeedService) listLatestFromDB(ctx context.Context, cursor *video.Cursor
 	}, nil
 }
 
-// rebuilidAndRetry ZSET为空的时候重建，从DB中拉取最近的1000条回填 Redis，然后重新走 ListFeed
+// rebuildAndRetry ZSET为空的时候重建，从DB中拉取最近的1000条回填 Redis，然后重新走 ListFeed
 func (s *FeedService) rebuildAndRetry(ctx context.Context, cursorStr string, cursor *video.Cursor, limit int) (*FeedListResult, error) {
 	res, err, _ := s.group.Do("sf:rebuild:global_time", func() (any, error) {
 		videos, err := s.repo.ListLatest(ctx, nil, 1000)
@@ -331,7 +358,7 @@ func (s *FeedService) rebuildAndRetry(ctx context.Context, cursorStr string, cur
 		return s.listLatestFromDB(ctx, cursor, limit)
 	}
 
-	if res.(string) == "EMPTY_DB" {
+	if s, ok := res.(string); ok && s == "EMPTY_DB" {
 		return &FeedListResult{Items: []video.VideoView{}}, nil
 	}
 
