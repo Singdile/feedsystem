@@ -55,8 +55,8 @@ func SetRouter(db *gorm.DB, cache *data.RedisClient, mc *data.MinioClient, secre
 
 	// video
 	videoRepo := videorepo.NewVideoRepo(mc, db)
-	timelineclean := videorepo.NewTimeLineCleaner(cache)
-	videoSvc := videosvc.NewVideoService(videoRepo, cache, timelineclean)
+	videoCacheClean := videorepo.NewVideoCacheCleaner(cache)
+	videoSvc := videosvc.NewVideoService(videoRepo, cache, videoCacheClean, cache)
 	videoHandler := video.NewHandler(videoSvc)
 	uploadG := r.Group("/api/v1/uploads/videos", authmiddle.JWTAuthMiddleWare(cache))
 	{

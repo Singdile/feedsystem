@@ -2,6 +2,9 @@ package data
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
 	"feedsystem/internal/config"
 	"feedsystem/internal/model/feed"
 	"fmt"
@@ -191,4 +194,42 @@ func (c *RedisClient) GetBytes(ctx context.Context, key string) ([]byte, error) 
 // SetBytes 写入字节内容（带TTL）
 func (c *RedisClient) SetBytes(ctx context.Context, key string, bytes []byte, ttl time.Duration) error {
 	return c.rdb.Set(ctx, key, bytes, ttl).Err()
+}
+
+// Lock 分布式锁： SETNX + token，释放时校验 token 防误删他人锁
+// SET key val NX EX 30;  set 操作。 NX 表示仅当key不存在的时候成功。 EX 设置过期时间
+func (c *RedisClient) Lock(ctx context.Context, key string, ttl time.Duration) (string, bool, error) {
+	token := randHex(16)
+	ok, err := c.rdb.SetNX(ctx, key, token, ttl).Result()
+	return token, ok, err
+}
+
+// 首先Get 获取KEY 对应的 Val
+// 判断VAL 和传入的 参数是否一致。如一致，可以删除；不一致，直接返回
+var unlockScript = redis.NewScript(
+	`
+if redis.call("GET",KEYS[1]) == ARGV[1] then
+ return redis.call("DEL",KEYS[1])
+else
+ return 0
+end
+`)
+
+// Unlock 解开分布式锁，释放属于自己的key
+func (c *RedisClient) Unlock(ctx context.Context, key string, token string) error {
+	_, err := unlockScript.Run(ctx, c.rdb, []string{key}, token).Result()
+	return err
+}
+
+// randHex 生成随机的会话号,n表示多少个字节，返回对应的16进制字符串。一个字节可以表达2个16进制数，所以就是返回2*n位16进制数
+func randHex(n int) string {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("%x", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b)
+}
+
+func IsMiss(err error) bool {
+	return errors.Is(err, redis.Nil)
 }

@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"feedsystem/internal/data"
 	"feedsystem/internal/model/video"
 	apperrors "feedsystem/internal/pkg/errors"
 	"fmt"
@@ -14,7 +15,6 @@ import (
 	"log"
 	"net/http"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -51,9 +51,21 @@ type ObjectStore interface {
 	Abort(ctx context.Context, objectKey, minioUploadID string) error
 }
 
-type TimelineCleaner interface {
-	ZRem(ctx context.Context, key string, member string) error
+// VideoCacheCleaner 视频缓存清理
+type VideoCacheCleaner interface {
+	RemoveVideoCache(ctx context.Context, videoID uint) error
 }
+
+// Entity 视频实体缓存操作
+type EntityCache interface {
+	Key(format string, a ...any) string
+	GetBytes(ctx context.Context, key string) ([]byte, error)
+	SetBytes(ctx context.Context, key string, val []byte, ttl time.Duration) error
+	Lock(ctx context.Context, key string, ttl time.Duration) (string, bool, error)
+	Unlock(ctx context.Context, key string, token string) error
+}
+
+const entityCacheTTL = time.Hour
 
 // VideoRepo 组合接口：service 依赖它一个即可
 type VideoRepo interface {
@@ -62,13 +74,14 @@ type VideoRepo interface {
 }
 
 type VideoService struct {
-	repo     VideoRepo
-	cache    ChunkCache
-	timeline TimelineCleaner
+	repo        VideoRepo
+	cache       ChunkCache
+	videoCache  VideoCacheCleaner //仅视频缓存清理
+	entityCache EntityCache       // 视频缓存操作
 }
 
-func NewVideoService(repo VideoRepo, cache ChunkCache, timeline TimelineCleaner) *VideoService {
-	return &VideoService{repo: repo, cache: cache, timeline: timeline}
+func NewVideoService(repo VideoRepo, cache ChunkCache, videoCache VideoCacheCleaner, entityCache EntityCache) *VideoService {
+	return &VideoService{repo: repo, cache: cache, videoCache: videoCache, entityCache: entityCache}
 }
 
 type ChunkCache interface {
@@ -311,20 +324,93 @@ func (s *VideoService) videoView(ctx context.Context, v *video.Video) (*video.Vi
 }
 
 // GetVideo 根据数据库中的视频ID,返回该视频的播放信息
+// 查询缓存数据，当缓存出现问题的时候才查询数据库
+// 使用redis 分布式锁，减少DB访问量（缓存击穿）
 func (s *VideoService) GetVideo(ctx context.Context, id uint) (*video.VideoView, error) {
 	if id == 0 {
 		return nil, apperrors.NewAppError(http.StatusBadRequest, "参数错误")
 	}
 
-	got, err := s.repo.FindByID(ctx, id)
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, apperrors.NewAppError(http.StatusNotFound, "视频不存在")
+	var cached video.VideoEntityCache
+	// 兜底： 查找DB
+	getFromDB := func() (*video.VideoView, error) {
+		v, err := s.repo.FindByID(ctx, id)
+
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, apperrors.NewAppError(http.StatusNotFound, "视频不存在")
+			}
+			return nil, apperrors.NewAppError(http.StatusInternalServerError, "查询视频失败")
 		}
-		return nil, apperrors.NewAppError(http.StatusInternalServerError, "查询视频失败")
+
+		return s.videoView(ctx, v)
 	}
 
-	return s.videoView(ctx, got)
+	// 查找缓存
+	key := s.entityCache.Key("video:entity:%d", id)
+	b, err := s.entityCache.GetBytes(ctx, key)
+	if err == nil {
+		if err := json.Unmarshal(b, &cached); err != nil {
+			log.Printf("解析缓存失败 videoID=%d err=%v", id, err)
+		} else {
+			v := cached.ToVideo()
+			return s.videoView(ctx, &v)
+		}
+	}
+
+	if !data.IsMiss(err) { // redis 有问题，兜底查询
+		return getFromDB()
+	}
+
+	// 缓存未命中，尝试获取redis分布锁，执行数据库查找
+	lockKey := fmt.Sprintf("video:lock:%d", id)
+	token, ok, err := s.entityCache.Lock(ctx, lockKey, 2*time.Second)
+	if err != nil { // redis 有问题，兜底查询
+		return getFromDB()
+	}
+
+	if ok { // 获取锁成功
+		defer s.entityCache.Unlock(context.Background(), lockKey, token) // 解锁是清理操作，应该使用永不取消的ctx
+		v, err := s.repo.FindByID(ctx, id)
+
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, apperrors.NewAppError(http.StatusNotFound, "视频不存在")
+			}
+			return nil, apperrors.NewAppError(http.StatusInternalServerError, "查询视频失败")
+		}
+
+		entityCache := v.ToVideoEntityCache()
+		if b, err := json.Marshal(entityCache); err == nil {
+			if err := s.entityCache.SetBytes(ctx, key, b, entityCacheTTL); err != nil { // 回写L2 redis
+				log.Printf("回填video entity 失败，videoID=%d，err=%v", id, err)
+			}
+		}
+
+		return s.videoView(ctx, v)
+	}
+
+	// 获取锁失败，等待他人执行结束，再次查找缓存数据
+	for range 5 {
+		// 查找缓存
+		key := s.entityCache.Key("video:entity:%d", id)
+		b, err := s.entityCache.GetBytes(ctx, key)
+		if err == nil {
+			if err := json.Unmarshal(b, &cached); err != nil {
+				return nil, apperrors.NewAppError(http.StatusInternalServerError, "解析错误")
+			}
+			v := cached.ToVideo()
+			return s.videoView(ctx, &v)
+		}
+
+		if !data.IsMiss(err) { // redis 有问题，兜底查询
+			return getFromDB()
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	// 缓存命中还是失败，兜底直接查DB
+	return getFromDB()
 }
 
 // ListResult 分页结果
@@ -418,11 +504,10 @@ func (s *VideoService) DeleteVideo(ctx context.Context, id uint, authorID uint) 
 		log.Printf("删除视频对象失败,用户:%v,视频key:%v,err:%v", authorID, v.VideoKey, err)
 	}
 
-	// 进行redis中的 feed:global_timeline 删除
-	if s.timeline != nil {
-		err := s.timeline.ZRem(ctx, "feed:global_timeline", strconv.FormatUint(uint64(v.ID), 10))
-		if err != nil {
-			log.Printf("delete timeline:%v,err:%v", v.ID, err)
+	// 删除缓存数据
+	if s.videoCache != nil {
+		if err := s.videoCache.RemoveVideoCache(ctx, v.ID); err != nil {
+			log.Printf("清理视频缓存失败，videoID:%v,err:%v", v.ID, err)
 		}
 	}
 	return nil

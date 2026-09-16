@@ -237,7 +237,7 @@ func (s *FeedService) GetVideoByIDs(ctx context.Context, ids []uint) ([]video.Vi
 				missedL2 = append(missedL2, missedL1[i])
 				continue
 			}
-			var cached feed.VideoEntityCache
+			var cached video.VideoEntityCache
 			if err := json.Unmarshal([]byte(str), &cached); err != nil {
 				missedL2 = append(missedL2, missedL1[i]) // 反序列化失败，交给L3
 				continue
@@ -275,7 +275,7 @@ func (s *FeedService) GetVideoByIDs(ctx context.Context, ids []uint) ([]video.Vi
 		videoMap[entity.ID] = entity
 
 		key := s.repo.Key("video:entity:%d", entity.ID)
-		cached := feed.ToVideoEntityCache(entity)
+		cached := entity.ToVideoEntityCache()
 		if b, err := json.Marshal(cached); err == nil {
 			_ = s.repo.SetBytes(ctx, key, b, entityCacheTTL) // 回填L2
 		} // write back to L2
@@ -315,7 +315,7 @@ func (s *FeedService) listLatestFromDB(ctx context.Context, cursor *video.Cursor
 	// 回填 L2;L1
 	for _, v := range vs {
 		key := s.repo.Key("video:entity:%d", v.ID)
-		videoEntityCache := feed.ToVideoEntityCache(v)
+		videoEntityCache := v.ToVideoEntityCache()
 		if b, err := json.Marshal(videoEntityCache); err == nil {
 			_ = s.repo.SetBytes(ctx, key, b, entityCacheTTL)
 		}
