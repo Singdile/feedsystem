@@ -127,7 +127,7 @@ func (s *FeedService) ListFeed(ctx context.Context, cursorStr string, limit int)
 		return s.listLatestFromDB(ctx, cursor, limit)
 	}
 
-	hotMore := len(members) > limit
+	hotMore := len(members) > limit // 热区(ZSET)是否还有超过一页的更多数据（limit+1 探测）
 	if hotMore {
 		members = members[:limit]
 	}
@@ -148,7 +148,7 @@ func (s *FeedService) ListFeed(ctx context.Context, cursorStr string, limit int)
 		return nil, apperrors.NewAppError(http.StatusInternalServerError, "get video failed")
 	}
 
-	// 冷热缝合
+	// 冷热缝合：hasMore 初始为"热区是否还有更多"
 	hasMore := hotMore
 	if !hotMore && len(entities) < limit { // 只有热点数据用完并且不满页的时候，会从DB冷区取出数据
 		coldCursor := cursor
@@ -168,11 +168,16 @@ func (s *FeedService) ListFeed(ctx context.Context, cursorStr string, limit int)
 				cold = cold[:remain]
 			}
 			entities = append(entities, cold...)
-			hasMore = coldMore
+			hasMore = coldMore // 冷区(DB)是否还有更多
 		}
 	}
 
-	// next_cursor
+	// 边界盲区修复：热区已耗尽但本页恰好取满 limit 条时，limit+1 探测只覆盖热区 ZSET，
+	// 无法确定冷区(DB)是否还有更多。此时假设"可能还有"，交出游标，
+	// 下一次请求会因 reqTime <= watermark 落入冷路径，从而接上 DB 冷数据。
+	hasMore = hasMore || len(entities) == limit
+
+	// next_cursor：仅当"可能还有更多"时才返回游标，否则前端判定没有更多
 	next := ""
 	if hasMore && len(entities) > 0 {
 		last := entities[len(entities)-1]
@@ -232,12 +237,12 @@ func (s *FeedService) GetVideoByIDs(ctx context.Context, ids []uint) ([]video.Vi
 				missedL2 = append(missedL2, missedL1[i])
 				continue
 			}
-			var entity video.Video
-			if err := json.Unmarshal([]byte(str), &entity); err != nil {
+			var cached feed.VideoEntityCache
+			if err := json.Unmarshal([]byte(str), &cached); err != nil {
 				missedL2 = append(missedL2, missedL1[i]) // 反序列化失败，交给L3
 				continue
 			}
-
+			entity := cached.ToVideo()
 			videoMap[entity.ID] = entity // L2 命中，放进结果 map，并回填至 L1
 			s.localcache.Set(keys[i], entity, l1CacheTTL)
 		}
@@ -270,9 +275,10 @@ func (s *FeedService) GetVideoByIDs(ctx context.Context, ids []uint) ([]video.Vi
 		videoMap[entity.ID] = entity
 
 		key := s.repo.Key("video:entity:%d", entity.ID)
-		if b, err := json.Marshal(entity); err == nil {
+		cached := feed.ToVideoEntityCache(entity)
+		if b, err := json.Marshal(cached); err == nil {
 			_ = s.repo.SetBytes(ctx, key, b, entityCacheTTL) // 回填L2
-		}
+		} // write back to L2
 		s.localcache.Set(key, entity, l1CacheTTL) // 回填L1
 	}
 
@@ -309,7 +315,8 @@ func (s *FeedService) listLatestFromDB(ctx context.Context, cursor *video.Cursor
 	// 回填 L2;L1
 	for _, v := range vs {
 		key := s.repo.Key("video:entity:%d", v.ID)
-		if b, err := json.Marshal(v); err == nil {
+		videoEntityCache := feed.ToVideoEntityCache(v)
+		if b, err := json.Marshal(videoEntityCache); err == nil {
 			_ = s.repo.SetBytes(ctx, key, b, entityCacheTTL)
 		}
 		s.localcache.Set(key, v, l1CacheTTL)
