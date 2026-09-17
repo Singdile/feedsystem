@@ -538,25 +538,3 @@ func (s *VideoService) AbortUpload(ctx context.Context, authorID uint, uploadID 
 	}
 	return nil
 }
-
-// GetVideoEntitiesByIDs 数据库查找并返回video实体数组
-func (s *VideoService) GetVideoEntitiesByIDs(ctx context.Context, ids []uint) ([]video.Video, error) {
-	vs, err := s.repo.GetVideosByIDs(ctx, ids)
-	if err != nil {
-		return nil, apperrors.NewAppError(http.StatusInternalServerError, "查询视频失败")
-	}
-	return vs, nil
-}
-
-// BuildViews 现签URL
-func (s *VideoService) BuildViews(ctx context.Context, videos []video.Video) ([]video.VideoView, error) {
-	views := make([]video.VideoView, 0, len(videos))
-	for i := range videos {
-		v, err := s.videoView(ctx, &videos[i])
-		if err != nil {
-			return nil, err
-		}
-		views = append(views, *v)
-	}
-	return views, nil
-}

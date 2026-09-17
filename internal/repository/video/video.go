@@ -7,7 +7,9 @@ import (
 	"feedsystem/internal/data"
 	"feedsystem/internal/model/feed"
 	"feedsystem/internal/model/video"
+	apperrors "feedsystem/internal/pkg/errors"
 	"io"
+	"net/http"
 	"time"
 
 	"github.com/minio/minio-go/v7"
@@ -16,6 +18,8 @@ import (
 
 const (
 	expireTimeUpLoad = 4 * time.Hour
+
+	playExpiry = time.Hour
 )
 
 type videoRepo struct {
@@ -118,8 +122,8 @@ func (r *videoRepo) CreateWithOutbox(ctx context.Context, v *video.Video) (*vide
 			return err
 		}
 
-		var m *feed.OutboxMsg
-		m = &feed.OutboxMsg{
+		// 填写outboxMSg信息
+		var m = &feed.OutboxMsg{
 			VideoID:   v.ID,
 			EventType: "publish",
 			Status:    "pending",
@@ -128,6 +132,26 @@ func (r *videoRepo) CreateWithOutbox(ctx context.Context, v *video.Video) (*vide
 			return err
 		}
 
+		// 填写tag 以及 videotag
+		tags := video.ExtractTags(v.Description)
+		if len(tags) > 0 {
+			for _, t := range tags {
+				tag := video.Tag{
+					Name: t,
+				}
+				if err := tx.Where("name = ?", t).FirstOrCreate(&tag).Error; err != nil {
+					return err
+				}
+
+				vTag := video.VideoTag{
+					VideoID: v.ID,
+					TagID:   tag.ID,
+				}
+				if err := tx.Create(&vTag).Error; err != nil {
+					return err
+				}
+			}
+		}
 		// 返回 nil 提交事务
 		return nil
 	})
@@ -171,8 +195,16 @@ func (r *videoRepo) List(ctx context.Context, authorID uint, cursor *video.Curso
 }
 
 // Delete 注意：实体带 DeletedAt，gorm .Delete 默认是软删；硬删必须 Unscoped
+// 删除视频的时候，同步删除video_tag
 func (r *videoRepo) Delete(ctx context.Context, id uint) error {
-	return r.db.WithContext(ctx).Unscoped().Delete(&video.Video{}, id).Error
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("video_id = ?", id).Delete(&video.VideoTag{}).Error; err != nil {
+			return err
+		}
+		return tx.Unscoped().Delete(&video.Video{}, id).Error
+	})
+
+	return err
 }
 
 // RemoveObject 删除视频对象以及对应的封面
@@ -218,4 +250,78 @@ func (r *videoRepo) GetVideosByIDs(ctx context.Context, ids []uint) ([]video.Vid
 	}
 
 	return out, nil
+}
+
+// ListByTag 按照tagName 查找 tags 表里面tagID，再在video_tags 表里面统计涉及到的videoID，并按照cursor信息筛选videoID，最后按照顺序查找video
+// select * from videos
+// JOIN video_tags ON videos.id = video_tags.video_id
+// JOIN tags ON tags.id = video_tags.tag_id)
+// where tags.name = ? and ((videos.created_at < ?) OR (videos.created_at = ? AND videos.id < ?))
+// orderby videos.created_at DESC,videos.id DESC
+// limit ?
+func (r *videoRepo) ListByTag(ctx context.Context, tagName string, cursor *video.Cursor, limit int) ([]video.Video, error) {
+	var items []video.Video
+
+	q := r.db.WithContext(ctx).Model(&video.Video{}).Joins("JOIN video_tags ON video_tags.video_id = videos.id").Joins("JOIN tags ON tags.id = video_tags.tag_id").Where("tags.name = ?", tagName)
+
+	if cursor != nil {
+		q = q.Where("(videos.created_at < ?) OR (videos.created_at = ? AND videos.id < ?)", cursor.CreatedAt, cursor.CreatedAt, cursor.ID)
+	}
+
+	err := q.Order("videos.created_at DESC,videos.id DESC").Limit(limit).Find(&items).Error
+	return items, err
+}
+
+// GetVideoEntitiesByIDs 根据IDs 返回对应的videos
+func (r *videoRepo) GetVideoEntitiesByIDs(ctx context.Context, ids []uint) ([]video.Video, error) {
+	var videos []video.Video
+	err := r.db.Model(&video.Video{}).Where("id in (?)", ids).Find(&videos).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return []video.Video{}, nil
+		}
+		return nil, err
+	}
+	return videos, nil
+}
+
+// BuildViews 签发视频播放url
+func (r *videoRepo) BuildViews(ctx context.Context, vs []video.Video) ([]video.VideoView, error) {
+	views := make([]video.VideoView, 0, len(vs))
+	for i := range vs {
+		v, err := r.signVideoView(ctx, &vs[i])
+		if err != nil {
+			return nil, err
+		}
+		views = append(views, *v)
+	}
+	return views, nil
+}
+
+func (r *videoRepo) signVideoView(ctx context.Context, v *video.Video) (*video.VideoView, error) {
+	play, err := r.mc.PresignedGetObject(ctx, v.VideoKey, playExpiry)
+	if err != nil {
+		return nil, apperrors.NewAppError(http.StatusInternalServerError, "生成播放地址失败")
+	}
+	if v.CoverKey == "" {
+		return nil, apperrors.NewAppError(http.StatusInternalServerError, "封面数据缺失")
+	} // 强制封面
+	cover, err := r.mc.PresignedGetObject(ctx, v.CoverKey, playExpiry)
+	if err != nil {
+		return nil, apperrors.NewAppError(http.StatusInternalServerError, "生成封面地址失败")
+	}
+
+	return &video.VideoView{
+		ID:          v.ID,
+		Title:       v.Title,
+		Description: v.Description,
+		Author: video.Author{
+			ID:       v.AuthorID,
+			Username: v.Username,
+		},
+		PlayURL:   play,
+		CoverURL:  cover,
+		CreatedAt: v.CreatedAt,
+	}, nil
+
 }

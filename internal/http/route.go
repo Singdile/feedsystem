@@ -76,9 +76,9 @@ func SetRouter(db *gorm.DB, cache *data.RedisClient, mc *data.MinioClient, secre
 
 	// feed
 	feedRepo := feedrepo.NewFeedRepo(cache, db)
-	feedSvc := feedsvc.NewFeedService(feedRepo, videoSvc)
+	feedSvc := feedsvc.NewFeedService(feedRepo, videoRepo)
 	feedHandler := feed.NewHandler(feedSvc)
 	r.GET("/api/v1/feed", feedHandler.ListFeed)
-
+	r.GET("/api/v1/feed/tag", feedHandler.ListByTag)
 	return r
 }

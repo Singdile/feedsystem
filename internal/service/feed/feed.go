@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/patrickmn/go-cache"
@@ -40,6 +41,7 @@ type FeedRepo interface {
 }
 
 type VideoProvider interface {
+	ListByTag(ctx context.Context, tagName string, cursor *video.Cursor, limit int) ([]video.Video, error)
 	GetVideoEntitiesByIDs(ctx context.Context, ids []uint) ([]video.Video, error)
 	BuildViews(ctx context.Context, vs []video.Video) ([]video.VideoView, error)
 }
@@ -370,4 +372,56 @@ func (s *FeedService) rebuildAndRetry(ctx context.Context, cursorStr string, cur
 	}
 
 	return s.ListFeed(ctx, cursorStr, limit)
+}
+
+func (s *FeedService) ListByTag(ctx context.Context, tagName, cursorStr string, limit int) (*FeedListResult, error) {
+	if strings.TrimSpace(tagName) == "" {
+		return nil, apperrors.NewAppError(http.StatusBadRequest, "参数错误")
+	}
+
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+
+	// 解析cursor：空串=首页，不解码；非空才解码
+	var cursor *video.Cursor
+	if cursorStr != "" {
+		cur, err := video.DecodeCursor(cursorStr)
+		if err != nil {
+			return nil, apperrors.NewAppError(http.StatusBadRequest, "bad_cursor")
+		}
+		cursor = &cur
+	}
+
+	// 查询数据库获取 videos
+	videos, err := s.videoSvc.ListByTag(ctx, tagName, cursor, limit+1)
+	if err != nil {
+		return nil, err
+	}
+	hasMore := len(videos) > limit
+	if hasMore {
+		videos = videos[:limit]
+	}
+
+	// 签名video，获取可播放url
+	views, err := s.videoSvc.BuildViews(ctx, videos)
+	if err != nil {
+		return nil, err
+	}
+
+	// next
+	next := ""
+	if hasMore {
+		last := videos[len(videos)-1]
+		cur := video.Cursor{
+			CreatedAt: last.CreatedAt,
+			ID:        last.ID,
+		}
+		next = video.EncodeCursor(cur)
+	}
+
+	return &FeedListResult{
+		Items:      views,
+		NextCursor: next,
+	}, nil
 }

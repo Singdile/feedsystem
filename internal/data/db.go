@@ -36,7 +36,7 @@ func NewDB(config config.DBConfig) (*gorm.DB, error) {
 
 // AutoMigrate 根据定义，迁移创建表
 func AutoMigrate(db *gorm.DB) error {
-	return db.AutoMigrate(&account.User{}, &video.Video{}, &feed.OutboxMsg{})
+	return db.AutoMigrate(&account.User{}, &video.Video{}, &feed.OutboxMsg{}, &video.Tag{}, &video.VideoTag{})
 }
 
 // CloseDB 关闭数据库连接

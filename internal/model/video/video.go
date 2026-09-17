@@ -20,7 +20,7 @@ type Video struct {
 	Description string         `gorm:"type:varchar(1000);default:''" json:"description,omitempty"`
 	VideoKey    string         `gorm:"type:varchar(255);not null" json:"-"` // 视频
 	CoverKey    string         `gorm:"type:varchar(255);not null" json:"-"` // 封面
-	CreatedAt   time.Time      `gorm:"autoCreateTime" json:"created_at"`
+	CreatedAt   time.Time      `gorm:"autoCreateTime;index" json:"created_at"`
 	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
 }
 

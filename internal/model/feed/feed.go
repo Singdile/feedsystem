@@ -26,3 +26,8 @@ type ZMember struct {
 	Score  float64 `json:"score"`  // createTime
 	Member string  `json:"member"` // videoID
 }
+
+type ListByTagReq struct {
+	TagName string `json:"tag_name"`
+	Cursor  string `json:"cursor"`
+}

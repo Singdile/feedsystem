@@ -33,3 +33,27 @@ func (h *Handler) ListFeed(c *gin.Context) {
 	}
 	response.OK(c, res)
 }
+
+// ListByTag 按照单个tag name 返回视频列表
+// 接收tag name 和 cursor，返回视频列表和cursor
+// cursor 为空表示没有更多页了
+func (h *Handler) ListByTag(c *gin.Context) {
+	tagName := c.Query("tag_name")
+	if tagName == "" {
+		response.Fail(c, http.StatusBadRequest, "tag_name 不能为空")
+		return
+	}
+	cursor := c.Query("cursor")
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	if limit < 0 {
+		response.Fail(c, http.StatusBadRequest, "参数错误")
+		return
+	}
+
+	res, err := h.svc.ListByTag(c.Request.Context(), tagName, cursor, limit)
+	if err != nil {
+		response.FromError(c, err)
+		return
+	}
+	response.OK(c, res)
+}
