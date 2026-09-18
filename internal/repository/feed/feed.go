@@ -9,13 +9,13 @@ import (
 	"time"
 
 	"gorm.io/gorm"
-)
 
+)
 type feedRepo struct {
 	cache *data.RedisClient
 	db    *gorm.DB
-}
 
+}
 func NewFeedRepo(cache *data.RedisClient, db *gorm.DB) *feedRepo {
 	return &feedRepo{cache: cache, db: db}
 }

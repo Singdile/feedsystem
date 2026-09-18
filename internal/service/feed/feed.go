@@ -68,17 +68,19 @@ type FeedListResult struct {
 }
 
 // ListFeed 查询视频数据，返回可播放的视频信息
-// 1.查找redis里面的时间线，获取前1000条热门视频ids
+// 按照发布时间线进行查询
+// 1.查找redis里面的时间线，获取前1000条视频ids
 //
-//	1.1 如果redis失效，直接查询数据库
+//	1.1 如果redis失效，直接查询数据库，返回
+//	1.2 如果redis有效，先查询redis，获取视频ids
+//	    1.2.1 如果redis 为空，查询数据库并重建redis，重新调用 ListFeed
+//	    1.2.2 如果redis 不为空，获取cursor之后的视频ids
 //
-// 2.查找ids对应的视频元数据
+// 2.查找ids对应的视频元数据 （三级缓存查找视频元数据： local-cache->redis->DB)
 //
-//	2.1  先查本地cache
-//	2.2  未命中再查redis
-//	2.3  未命中再查mysql
-//
-// 3.获取视频元数据，对其进行签发，获得播放地址并返回
+//	2.1 查询并获取热区数据(ids)对应的视频元数据
+//	2.2 当热区数据满足一页，使用视频元数据，签发对象存储可播放url并返回
+//	2.2 当热区数据没有了且当前获取的视频元数据不足一页(limit)的时候，从数据库中获取冷数据补充完一页，签发对象存储可播放url并返回
 func (s *FeedService) ListFeed(ctx context.Context, cursorStr string, limit int) (*FeedListResult, error) {
 	// 解析游标
 	if limit <= 0 {
@@ -113,8 +115,8 @@ func (s *FeedService) ListFeed(ctx context.Context, cursorStr string, limit int)
 		return s.rebuildAndRetry(ctx, cursorStr, cursor, limit)
 	}
 
-	watermark := tail[0].Score // 冷热数据分界线
-	reqTime := float64(time.Now().UnixMilli())
+	watermark := tail[0].Score                 // 冷热数据分界线
+	reqTime := float64(time.Now().UnixMilli()) // req表示请求视频的时间线，若没有游标则表示请求当前时间之后的视频
 	if cursor != nil {
 		reqTime = float64(cursor.CreatedAt.UnixMilli())
 	}
