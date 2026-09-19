@@ -1,5 +1,5 @@
-// Package videosvc 提供视频上传下载服务
-package videosvc
+// Package video 提供视频上传下载服务
+package video
 
 import (
 	"context"
@@ -537,4 +537,22 @@ func (s *VideoService) AbortUpload(ctx context.Context, authorID uint, uploadID 
 		log.Printf("clean session err:%v", err)
 	}
 	return nil
+}
+
+// GetRatingCounts 查询视频的rating详情
+func (s *VideoService) GetRatingCounts(ctx context.Context, videoID uint) (likedCount, dislikedCount uint, err error) {
+	if videoID <= 0 {
+		return 0, 0, apperrors.NewAppError(http.StatusBadRequest, "请求参数错误")
+	}
+
+	v, err := s.repo.FindByID(ctx, videoID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return 0, 0, apperrors.NewAppError(http.StatusBadRequest, "请求参数错误")
+
+		}
+		return 0, 0, err
+	}
+
+	return v.LikedCount, v.DislikedCount, nil
 }

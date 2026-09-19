@@ -13,15 +13,17 @@ import (
 
 // Video 视频实体
 type Video struct {
-	ID          uint           `gorm:"primaryKey" json:"id"`
-	AuthorID    uint           `gorm:"index;not null" json:"author_id"`
-	Username    string         `gorm:"type:varchar(255);not null" json:"username"`
-	Title       string         `gorm:"type:varchar(255);not null" json:"title"`
-	Description string         `gorm:"type:varchar(1000);default:''" json:"description,omitempty"`
-	VideoKey    string         `gorm:"type:varchar(255);not null" json:"-"` // 视频
-	CoverKey    string         `gorm:"type:varchar(255);not null" json:"-"` // 封面
-	CreatedAt   time.Time      `gorm:"autoCreateTime;index" json:"created_at"`
-	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
+	ID            uint           `gorm:"primaryKey" json:"id"`
+	AuthorID      uint           `gorm:"index;not null" json:"author_id"`
+	Username      string         `gorm:"type:varchar(255);not null" json:"username"`
+	Title         string         `gorm:"type:varchar(255);not null" json:"title"`
+	Description   string         `gorm:"type:varchar(1000);default:''" json:"description,omitempty"`
+	VideoKey      string         `gorm:"type:varchar(255);not null" json:"-"` // 视频
+	CoverKey      string         `gorm:"type:varchar(255);not null" json:"-"` // 封面
+	CreatedAt     time.Time      `gorm:"autoCreateTime;index" json:"created_at"`
+	DeletedAt     gorm.DeletedAt `gorm:"index" json:"-"`
+	LikedCount    uint           `gorm:"not null;default:0" json:"liked_count"`
+	DislikedCount uint           `gorm:"not null;default:0" json:"disliked_count"`
 }
 
 // InitReq 上传视频请求参数

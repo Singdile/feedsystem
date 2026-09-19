@@ -325,3 +325,24 @@ func (h *Handler) DeleteVideo(c *gin.Context) {
 	// 返回响应
 	response.OK(c)
 }
+
+// GetVideoRating 获取视频的likedcount 和 dislikedcount
+func (h *Handler) GetVideoRating(c *gin.Context) {
+	videoIDStr := c.Param("id")
+	videoID, err := strconv.ParseUint(videoIDStr, 10, 64)
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, "参数错误")
+		return
+	}
+
+	likedCount, dislikedCount, err := h.svc.GetRatingCounts(c.Request.Context(), uint(videoID))
+	if err != nil {
+		response.Fail(c, http.StatusInternalServerError, "内部错误")
+		return
+	}
+
+	response.OK(c, gin.H{
+		"liked_count":    likedCount,
+		"disliked_count": dislikedCount,
+	})
+}

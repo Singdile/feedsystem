@@ -14,7 +14,7 @@ import (
 	videorepo "feedsystem/internal/repository/video"
 	feedsvc "feedsystem/internal/service/feed"
 	usersvc "feedsystem/internal/service/user"
-	"feedsystem/internal/service/video"
+	videosvc "feedsystem/internal/service/video"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -80,5 +80,15 @@ func SetRouter(db *gorm.DB, cache *data.RedisClient, mc *data.MinioClient, secre
 	feedHandler := feed.NewHandler(feedSvc)
 	r.GET("/api/v1/feed", feedHandler.ListFeed)
 	r.GET("/api/v1/feed/tag", feedHandler.ListByTag)
+
+	// rating video
+	ratingHandler := video.NewRatingHandler(nil)
+	ratingG := r.Group("/api/v1/videos", authmiddle.JWTAuthMiddleWare(cache))
+	{
+		ratingG.GET("/:id/video", videoHandler.GetVideoRating)
+		ratingG.POST("/:id/rating", ratingHandler.SetRating)
+		ratingG.GET("/:id/rating", ratingHandler.GetRating)
+		ratingG.GET("/me/liked-videos", ratingHandler.ListLikedVideos)
+	}
 	return r
 }
