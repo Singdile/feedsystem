@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"feedsystem/internal/model/video"
+	"time"
 
 	"gorm.io/gorm"
 )
@@ -110,4 +111,69 @@ func deltaCount(oldstat, newstat int8) (int8, int8) {
 	}
 
 	return likeNewVote - likeOldVote, dislikeNewVote - dislikeOldVote
+}
+
+// GetRating 获取用户对视频的评价
+func (r *ratingRepo) GetRating(ctx context.Context, videoID, accountID uint) (int8, error) {
+	if accountID == 0 || videoID == 0 {
+		return 0, errors.New("invalid argument")
+	}
+
+	var vRating video.VideoRating
+	err := r.db.WithContext(ctx).Where("video_id = ? AND account_id = ?", videoID, accountID).Find(&vRating).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return 0, nil
+		}
+		return 0, err
+	}
+
+	return vRating.Status, nil
+}
+
+// GetRatings 获取用户对一批视频的评价
+func (r *ratingRepo) GetRatings(ctx context.Context, videoIDs []uint, accountID uint) (map[uint]int8, error) {
+	if accountID == 0 || len(videoIDs) == 0 {
+		return nil, nil
+	}
+
+	ratings := make(map[uint]int8)
+
+	var rows []video.VideoRating
+
+	err := r.db.WithContext(ctx).Where("video_id IN (?) AND account_id = ?", videoIDs, accountID).Find(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+
+	for _, v := range rows {
+		ratings[v.VideoID] = v.Status
+	}
+
+	return ratings, nil
+}
+
+// ListLikedVideos 查询用户点赞过的视频
+func (r *ratingRepo) ListLikedVideos(ctx context.Context, accountID uint, cursor *video.Cursor, limit int) ([]video.Video, error) {
+	if accountID == 0 {
+		return nil, errors.New("invalid argument")
+	}
+
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+
+	q := r.db.WithContext(ctx).Model(&video.Video{}).Joins("JOIN video_ratings vr ON vr.video_id = videos.id").Where("vr.account_id = ? AND vr.status = ?", accountID, 1)
+
+	// 游标：上一页最后一条 (created_at, id)，对齐现有 video.List 的写法
+	if cursor != nil {
+		q = q.Where("(videos.created_at < ?) OR (videos.created_at = ? AND videos.id < ?)",
+			cursor.CreatedAt, cursor.CreatedAt, cursor.ID)
+	} else {
+		q = q.Where("videos.created_at < ?", time.Now())
+	}
+
+	var items []video.Video
+	err := q.Order("videos.created_at DESC,videos.id DESC").Limit(limit).Find(&items).Error
+	return items, err
 }

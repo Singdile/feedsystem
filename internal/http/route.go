@@ -2,8 +2,6 @@
 package http
 
 import (
-	"feedsystem/internal/config"
-	"feedsystem/internal/data"
 	"feedsystem/internal/http/handler/feed"
 	"feedsystem/internal/http/handler/user"
 	"feedsystem/internal/http/handler/video"
@@ -17,11 +15,10 @@ import (
 	videosvc "feedsystem/internal/service/video"
 
 	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
 )
 
 // SetRouter 装配全部路由与中间件
-func SetRouter(db *gorm.DB, cache *data.RedisClient, mc *data.MinioClient, secret config.JwtConfig) *gin.Engine {
+func SetRouter(app *App) *gin.Engine {
 	r := gin.Default()
 
 	// 健康检查
@@ -30,17 +27,17 @@ func SetRouter(db *gorm.DB, cache *data.RedisClient, mc *data.MinioClient, secre
 	})
 
 	// 中间件装配
-	authmiddle := auth.NewAuthSecret(jwt.SetSecret(secret.Secret))
+	authmiddle := auth.NewAuthSecret(jwt.SetSecret(app.Secret.Secret))
 
 	// 依赖注入，装配
-	userRepo := userrepo.NewuserRepo(db)
-	userSvc := usersvc.NewUserService(userRepo, cache)
+	userRepo := userrepo.NewuserRepo(app.DB)
+	userSvc := usersvc.NewUserService(userRepo, app.Cache)
 	userHandler := user.NewHandler(userSvc)
 
 	// 用户api
 	r.POST("/api/v1/users", userHandler.Register) //创建用户
 
-	userG := r.Group("/api/v1/users", authmiddle.JWTAuthMiddleWare(cache))
+	userG := r.Group("/api/v1/users", authmiddle.JWTAuthMiddleWare(app.Cache))
 	{
 		userG.PUT("/password", userHandler.ChangePassword) //修改密码
 		userG.GET("/:id", userHandler.GetUserByID)         //按照ID查询
@@ -54,11 +51,11 @@ func SetRouter(db *gorm.DB, cache *data.RedisClient, mc *data.MinioClient, secre
 	authG.POST("/logout", userHandler.Logout)   //注销+服务端踢掉token
 
 	// video
-	videoRepo := videorepo.NewVideoRepo(mc, db)
-	videoCacheClean := videorepo.NewVideoCacheCleaner(cache)
-	videoSvc := videosvc.NewVideoService(videoRepo, cache, videoCacheClean, cache)
+	videoRepo := videorepo.NewVideoRepo(app.MC, app.DB)
+	videoCacheClean := videorepo.NewVideoCacheCleaner(app.Cache)
+	videoSvc := videosvc.NewVideoService(videoRepo, app.Cache, videoCacheClean, app.Cache)
 	videoHandler := video.NewHandler(videoSvc)
-	uploadG := r.Group("/api/v1/uploads/videos", authmiddle.JWTAuthMiddleWare(cache))
+	uploadG := r.Group("/api/v1/uploads/videos", authmiddle.JWTAuthMiddleWare(app.Cache))
 	{
 		uploadG.POST("/init", videoHandler.Init)
 		uploadG.GET("/:uploadID/status", videoHandler.GetLoadStatus)
@@ -72,18 +69,21 @@ func SetRouter(db *gorm.DB, cache *data.RedisClient, mc *data.MinioClient, secre
 
 	r.GET("/api/v1/videos/:id", videoHandler.GetVideo)
 	r.GET("/api/v1/videos", videoHandler.ListVideos)
-	r.DELETE("/api/v1/videos/:id", authmiddle.JWTAuthMiddleWare(cache), videoHandler.DeleteVideo)
+	r.DELETE("/api/v1/videos/:id", authmiddle.JWTAuthMiddleWare(app.Cache), videoHandler.DeleteVideo)
 
 	// feed
-	feedRepo := feedrepo.NewFeedRepo(cache, db)
+	feedRepo := feedrepo.NewFeedRepo(app.Cache, app.DB)
 	feedSvc := feedsvc.NewFeedService(feedRepo, videoRepo)
 	feedHandler := feed.NewHandler(feedSvc)
 	r.GET("/api/v1/feed", feedHandler.ListFeed)
 	r.GET("/api/v1/feed/tag", feedHandler.ListByTag)
 
 	// rating video
-	ratingHandler := video.NewRatingHandler(nil)
-	ratingG := r.Group("/api/v1/videos", authmiddle.JWTAuthMiddleWare(cache))
+	ratingRepo := videorepo.NewRatingRepo(app.DB)
+	mqRepo := videorepo.NewRatingMQ(app.RatingMQPub)
+	ratingSvc := videosvc.NewRatingService(ratingRepo, videoRepo, mqRepo)
+	ratingHandler := video.NewRatingHandler(ratingSvc)
+	ratingG := r.Group("/api/v1/videos", authmiddle.JWTAuthMiddleWare(app.Cache))
 	{
 		ratingG.GET("/:id/video", videoHandler.GetVideoRating)
 		ratingG.POST("/:id/rating", ratingHandler.SetRating)

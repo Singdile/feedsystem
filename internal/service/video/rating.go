@@ -10,19 +10,21 @@ import (
 // RateRepo 负责video_tags 表的操作(DB)
 type RateRepo interface {
 	SetRating(ctx context.Context, videoID, accountID uint, stauts int8) error
-	GetStatus(ctx context.Context, videoID, accountID uint) (int8, error)
-	ListLikedVideos(ctx context.Context, accountID uint) ([]video.Video, error)
+	GetRating(ctx context.Context, videoID, accountID uint) (int8, error)
+	GetRatings(ctx context.Context, videoID []uint, accountID uint) (map[uint]int8, error)
+	ListLikedVideos(ctx context.Context, accountID uint, cursorStr *video.Cursor, limit int) ([]video.Video, error)
 }
 
 // RatingMQ 发送 Rating 事件到MQ
 type RatingMQ interface {
-	PublishRating(ctx context.Context, actiong string, userID, videoID uint) error
+	PublishRating(ctx context.Context, action string, accountID, videoID uint) error
 }
 
 type RatingService struct {
-	RateRepo  RateRepo
-	VideoRepo VideoDB
-	MQ        RatingMQ
+	RateRepo    RateRepo
+	VideoRepo   VideoDB
+	ObjectStore ObjectStore
+	MQ          RatingMQ
 }
 
 // NewRatingService 构造评价服务
@@ -64,11 +66,63 @@ func (s *RatingService) SetUserRating(ctx context.Context, accountID, videoID ui
 
 // GetUserRating 接收用户id，视频id，查询用户对视频的rating
 func (s *RatingService) GetUserRating(ctx context.Context, accountID uint, videoID uint) (stat int8, err error) {
+	if accountID == 0 || videoID == 0 {
+		return 0, apperrors.NewAppError(http.StatusBadRequest, "参数错误")
+	}
 
-	return 0, nil
+	stat, err = s.RateRepo.GetRating(ctx, videoID, accountID)
+	if err != nil {
+		return 0, err
+	}
+
+	return stat, nil
 }
 
-// ListLikedVideos 查询用户liked 的视频，并返回可播放视频数据(分页)
-func (s *RatingService) ListLikedVideos(ctx context.Context, accountID uint, cursorStr string) (views []video.VideoView, nextCursor string, err error) {
-	return nil, "", nil
+// GetUserRatings 接收用户id，视频ids，查询用户对一批视频的评价
+func (s *RatingService) GetUserRatings(ctx context.Context, accountID uint, videoID []uint) (stat map[uint]int8, err error) {
+	if accountID == 0 || len(videoID) == 0 {
+		return nil, apperrors.NewAppError(http.StatusBadRequest, "参数错误")
+	}
+
+	return s.RateRepo.GetRatings(ctx, videoID, accountID)
+}
+
+// ListLikedVideos 查询用户liked 的视频
+func (s *RatingService) ListLikedVideos(ctx context.Context, accountID uint, cursorStr string, limit int) (videos []video.Video, nextCursor string, err error) {
+	if accountID == 0 {
+		return nil, "", apperrors.NewAppError(http.StatusBadRequest, "参数错误")
+	}
+
+	// 解析游标
+	var cursor *video.Cursor
+	if cursorStr == "" {
+		cursor = nil
+	} else {
+		cur, _ := video.DecodeCursor(cursorStr)
+		cursor = &cur
+	}
+
+	// 查询
+	videos, err = s.RateRepo.ListLikedVideos(ctx, accountID, cursor, limit+1)
+	if err != nil {
+		return nil, "", err
+	}
+
+	hasmore := len(videos) > limit
+	if hasmore {
+		videos = videos[:limit]
+	}
+
+	// 更新游标
+	next := ""
+	if hasmore && len(videos) > 0 { // 有下一页游标更新，否则返回""
+		last := videos[len(videos)-1]
+		next = video.EncodeCursor(video.Cursor{
+			CreatedAt: last.CreatedAt,
+			ID:        last.ID,
+		})
+	}
+
+	// 返回数据以及游标; 游标为"" 表示没有下一页了
+	return videos, next, nil
 }

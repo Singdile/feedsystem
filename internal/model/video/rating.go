@@ -1,6 +1,9 @@
 package video
 
-import "time"
+import (
+	"errors"
+	"time"
+)
 
 // VideoRating 记录user 与 video 的rating 信息
 type VideoRating struct {
@@ -31,4 +34,27 @@ func StatusToString(status int8) string {
 	default:
 		return StatusNoneStr
 	}
+}
+
+// StringToStatus 解析 action 字符串为状态值
+func StringToStatus(action string) (int8, error) {
+	switch action {
+	case StatusLikeStr:
+		return StatusLike, nil
+	case StatusDislikeStr:
+		return StatusDislike, nil
+	case StatusNoneStr:
+		return StatusNone, nil
+	default:
+		return 0, errors.New("invalid action")
+	}
+}
+
+// RatingEvent 发送到mq中的rating事件
+type RatingEvent struct {
+	EventID    string    `json:"event_id"`
+	Action     string    `json:"action"`
+	AccountID  uint      `json:"account_id"`
+	VideoID    uint      `json:"video_id"`
+	OccurredAt time.Time `json:"occurred_at"`
 }
