@@ -1,5 +1,7 @@
 # 变量定义 (放在最顶层，方便以后修改)
 APP_NAME    := feedsystem
+APP_WORKER    := $(APP_NAME)-worker
+
 
 # 2. 【核心】默认目标 (必须放在第一个目标位置)
 all: tidy build
@@ -8,6 +10,12 @@ all: tidy build
 build:
 	@echo "=> 🚀 正在构建二进制文件 [$(APP_NAME)]..."
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w" -o ./bin/$(APP_NAME) ./cmd/main.go
+
+
+build-worker:
+	@echo "=> 🚀 正在构建二进制文件 [$(APP_WORKER)]..."
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w" -o ./bin/$(APP_WORKER) ./cmd/worker/main.go
+
 
 run:
 	@echo "=> ⚡ 正在启动应用..."
@@ -38,4 +46,4 @@ help:
 	@echo "  make run               - 直接运行项目"
 
 # 6. 【统一声明】.PHONY (放在最后或目标上方，防止冲突)
-.PHONY: all build run test tidy clean help
+.PHONY: all build build-worker run test tidy clean help

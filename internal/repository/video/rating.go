@@ -38,7 +38,7 @@ func (r *ratingRepo) SetRating(ctx context.Context, videoID, accountID uint, sta
 			if status == 0 {
 				return nil
 			} else {
-				err := tx.Model(&video.VideoRating{}).Create(video.VideoRating{VideoID: videoID, AccountID: accountID, Status: status}).Error
+				err := tx.Model(&video.VideoRating{}).Create(&video.VideoRating{VideoID: videoID, AccountID: accountID, Status: status}).Error
 				if err != nil {
 					return err
 				}
