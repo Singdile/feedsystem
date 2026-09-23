@@ -20,6 +20,10 @@ const (
 	RatingQueue        = "rating.events"
 	RatingBindingKey   = "rating.*"
 	RatingPublishRK    = "rating.update"
+	CommentExchange    = "comment.events"
+	CommentQueue       = "comment.events"
+	CommentBindingKey  = "comment.*"
+	CommentPublishRK   = "comment.publish" // 唯一 RK，publish/delete 都走它
 )
 
 type RabbitMQClient struct {
@@ -109,4 +113,13 @@ func (c *RabbitMQClient) DeclareRatingTopology(ctx context.Context) error {
 // NewRatingPublisher 返回一个rating mq的生产者
 func (c *RabbitMQClient) NewRatingPublisher(ctx context.Context) (*rmq.Publisher, error) {
 	return c.NewPublisher(ctx, rmq.ExchangeAddress{Exchange: RatingExchange, Key: RatingPublishRK})
+}
+
+// DeclareCommentTopology 声明comment MQ  (exchange, queue, bindKey)
+func (c *RabbitMQClient) DeclareCommentTopology(ctx context.Context) error {
+	return c.DeclareTopology(ctx, CommentExchange, CommentQueue, CommentBindingKey)
+}
+
+func (c *RabbitMQClient) NewCommentPublisher(ctx context.Context) (*rmq.Publisher, error) {
+	return c.NewPublisher(ctx, rmq.ExchangeAddress{Exchange: CommentExchange, Key: CommentPublishRK})
 }

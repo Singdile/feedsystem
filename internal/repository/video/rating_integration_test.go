@@ -37,7 +37,7 @@ func newTestDB(t *testing.T) *gorm.DB {
 
 	db, err := data.NewDB(base) // 临时库建立连接
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&video.Video{}, &video.VideoRating{}))
+	require.NoError(t, db.AutoMigrate(&video.Video{}, &video.VideoRating{}, &video.Comment{}))
 
 	t.Cleanup(func() {
 		data.CloseDB(db)

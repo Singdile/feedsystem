@@ -45,5 +45,14 @@ func main() {
 	ratingSeter := video.NewRatingRepo(DB)
 	worker.RunConsumer(ctx, mq, data.RatingQueue, worker.RatingHandler(ratingSeter))
 
+	// 声明comment 拓扑
+	if err := mq.DeclareCommentTopology(topoCtx); err != nil {
+		log.Fatalf("failed to declare comment topology: %v", err)
+	}
+
+	// 启动comment
+	commentWriter := video.NewCommentRepo(DB)
+	worker.RunConsumer(ctx, mq, data.CommentQueue, worker.CommentHandler(commentWriter))
+
 	<-ctx.Done() // 阻塞等待 SIGINT/SIGTERM
 }

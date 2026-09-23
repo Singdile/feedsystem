@@ -90,5 +90,19 @@ func SetRouter(app *App) *gin.Engine {
 		ratingG.GET("/:id/rating", ratingHandler.GetRating)
 		ratingG.GET("/me/liked-videos", ratingHandler.ListLikedVideos)
 	}
+
+	// comment
+	commentRepo := videorepo.NewCommentRepo(app.DB)
+	commentMQ := videorepo.NewCommentMQ(app.CommentMQPub)
+	commentSvc := videosvc.NewCommentService(commentRepo, commentMQ, videoRepo) // videoRepo 有 FindByID → 满足 VideoChecker
+	commentHandler := video.NewCommentHandler(commentSvc)
+
+	commentAuthG := r.Group("/api/v1/videos/:id/comments", authmiddle.JWTAuthMiddleWare(app.Cache))
+	{
+		commentAuthG.POST("", commentHandler.Publish) // 发布（登录）
+	}
+
+	r.GET("/api/v1/videos/:id/comments", commentHandler.List)                                                // 列表（公开）
+	r.DELETE("/api/v1/comments/:comment_id", authmiddle.JWTAuthMiddleWare(app.Cache), commentHandler.Delete) // 删除（登录）
 	return r
 }

@@ -21,18 +21,15 @@ type RatingMQ interface {
 }
 
 type RatingService struct {
-	RateRepo    RateRepo
-	VideoRepo   VideoDB
-	ObjectStore ObjectStore
-	MQ          RatingMQ
+	RateRepo RateRepo
+	MQ       RatingMQ
 }
 
 // NewRatingService 构造评价服务
 func NewRatingService(repo RateRepo, dbRepo VideoDB, mq RatingMQ) *RatingService {
 	return &RatingService{
-		RateRepo:  repo,
-		VideoRepo: dbRepo,
-		MQ:        mq,
+		RateRepo: repo,
+		MQ:       mq,
 	}
 }
 

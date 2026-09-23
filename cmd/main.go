@@ -70,16 +70,18 @@ func main() {
 
 	// 声明topo结构
 	ratingPublisher := initRatingMQ(ctx, mq)
+	commentPublisher := initCommentMQ(ctx, mq)
 
 	// 装配路由并启动 HTTP 服务
 	app := &http.App{
-		DB:          DB,
-		Cache:       rdb,
-		MC:          mc,
-		MQ:          mq,
-		TimelinePub: timelinePublisher,
-		RatingMQPub: ratingPublisher,
-		Secret:      conf.JwtConfig,
+		DB:           DB,
+		Cache:        rdb,
+		MC:           mc,
+		MQ:           mq,
+		TimelinePub:  timelinePublisher,
+		RatingMQPub:  ratingPublisher,
+		CommentMQPub: commentPublisher,
+		Secret:       conf.JwtConfig,
 	}
 	router := http.SetRouter(app)
 	addr := fmt.Sprintf(":%d", conf.AppConfig.Port)
@@ -128,6 +130,24 @@ func initRatingMQ(ctx context.Context, mq *data.RabbitMQClient) *rmq.Publisher {
 	pub, err := mq.NewRatingPublisher(topoCtx)
 	if err != nil {
 		log.Printf("failed to create rating publisher,err: %v", err)
+		return nil
+	}
+	return pub
+}
+
+func initCommentMQ(ctx context.Context, mq *data.RabbitMQClient) *rmq.Publisher {
+	if mq == nil {
+		return nil
+	}
+	topoCtx, cancel := context.WithTimeout(ctx, time.Second*5)
+	defer cancel()
+	if err := mq.DeclareCommentTopology(topoCtx); err != nil {
+		log.Printf("failed to declare comment topology,err: %v", err)
+		return nil
+	}
+	pub, err := mq.NewCommentPublisher(topoCtx)
+	if err != nil {
+		log.Printf("failed to create comment publisher,err: %v", err)
 		return nil
 	}
 	return pub
