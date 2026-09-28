@@ -64,7 +64,8 @@ func TestCommentRepo_Create(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.Name, func(t *testing.T) {
 			db := newTestDB(t)
-			repo := NewCommentRepo(db)
+			cache, _ := newTestRedis(t)
+			repo := NewCommentRepo(db, cache)
 
 			err := repo.Create(t.Context(), tt.Comment) //db create 会回填主键id的
 
@@ -91,7 +92,8 @@ func TestCommentRepo_Create(t *testing.T) {
 // 测试create comment 能不能同步添加到video中的comment_count字段
 func TestCommentRepo_CreateAndDelete(t *testing.T) {
 	db := newTestDB(t)
-	repo := NewCommentRepo(db)
+	cache, _ := newTestRedis(t)
+	repo := NewCommentRepo(db, cache)
 
 	seedVideo(t, db, video.Video{
 		ID:            1,
@@ -147,7 +149,7 @@ func TestCommentRepo_CreateAndDelete(t *testing.T) {
 
 func TestCommentRepo_ListByVideoID(t *testing.T) {
 	db := newTestDB(t)
-
+	cache, _ := newTestRedis(t)
 	// video1 3 条评论、video2 2 条评论（用于隔离验证）
 	v1 := []*video.Comment{
 		{VideoID: 1, AuthorID: 1, AccountID: 1, Content: "comment-1", UserName: "test"},
@@ -165,7 +167,7 @@ func TestCommentRepo_ListByVideoID(t *testing.T) {
 		require.NoError(t, db.Create(c).Error)
 	}
 
-	repo := NewCommentRepo(db)
+	repo := NewCommentRepo(db, cache)
 
 	// 首页：DESC 排序（最新在前）+ limit 生效
 	t.Run("首页 DESC 排序 + limit", func(t *testing.T) {

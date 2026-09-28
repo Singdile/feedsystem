@@ -3,24 +3,28 @@ package video
 import (
 	"context"
 	"errors"
+	"feedsystem/internal/data"
 	"feedsystem/internal/model/video"
+	"log"
 	"time"
 
 	"gorm.io/gorm"
 )
 
 type ratingRepo struct {
-	db *gorm.DB
+	db    *gorm.DB
+	cache *data.RedisClient
 }
 
-func NewRatingRepo(db *gorm.DB) *ratingRepo {
-	return &ratingRepo{db: db}
+func NewRatingRepo(db *gorm.DB, cache *data.RedisClient) *ratingRepo {
+	return &ratingRepo{db: db, cache: cache}
 }
 
 // SetRating 设置video_ratings （幂等性设置）,同步更新videos里的计数信息
 // 只需要记录状态为like 和 dislike，未评价的直接删除
 func (r *ratingRepo) SetRating(ctx context.Context, videoID, accountID uint, status int8) error {
-	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	changed := false // 计数是否真正发生变更（幂等 no-op 不失效缓存）
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var cur video.VideoRating
 		// 读取当前状态
 		err := tx.Where("video_id = ? AND account_id = ?", videoID, accountID).First(&cur).Error
@@ -75,8 +79,21 @@ func (r *ratingRepo) SetRating(ctx context.Context, videoID, accountID uint, sta
 		if err != nil {
 			return err
 		}
+		changed = true // 计数已更新，才失效缓存
 		return nil
 	})
+
+	if err != nil {
+		return err
+	}
+
+	if changed {
+		if err := r.cache.Del(ctx, r.cache.Key("video:entity:%d", videoID)); err != nil {
+			log.Printf("failed to cache video:entity:%d", videoID)
+		}
+	}
+
+	return nil
 }
 
 // deltaCount 计算新的stat带来的的likecount 和 dislikecount 的增量变化

@@ -3,19 +3,23 @@ package video
 import (
 	"context"
 	"errors"
+	"feedsystem/internal/data"
 	"feedsystem/internal/model/video"
+	"log"
 
 	"gorm.io/gorm"
 )
 
 // commentRepo 实现 service/video.CommentRepo
 type commentRepo struct {
-	db *gorm.DB
+	db    *gorm.DB
+	cache *data.RedisClient
 }
 
-func NewCommentRepo(db *gorm.DB) *commentRepo {
+func NewCommentRepo(db *gorm.DB, cache *data.RedisClient) *commentRepo {
 	return &commentRepo{
-		db: db,
+		db:    db,
+		cache: cache,
 	}
 }
 
@@ -24,7 +28,7 @@ func (r *commentRepo) Create(ctx context.Context, c *video.Comment) error {
 		return errors.New("empty comment or invalid params")
 	}
 
-	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		err := tx.Create(c).Error
 		if err != nil {
 			return err
@@ -37,11 +41,20 @@ func (r *commentRepo) Create(ctx context.Context, c *video.Comment) error {
 
 		return nil
 	})
+
+	if err != nil {
+		return err
+	}
+
+	if err := r.cache.Del(ctx, r.cache.Key("video:entity:%d", c.VideoID)); err != nil {
+		log.Printf("failed to cache video:entity:%d", c.VideoID)
+	}
+	return err
 }
 
 func (r *commentRepo) Delete(ctx context.Context, commentID uint) error {
-	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var comment video.Comment
+	var comment video.Comment
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		err := tx.Model(&video.Comment{}).Where("id = ?", commentID).Find(&comment).Error
 		if err != nil {
 			return err
@@ -58,6 +71,14 @@ func (r *commentRepo) Delete(ctx context.Context, commentID uint) error {
 		return nil
 	})
 
+	if err != nil {
+		return err
+	}
+
+	if err := r.cache.Del(ctx, r.cache.Key("video:entity:%d", comment.VideoID)); err != nil {
+		log.Printf("failed to cache video:entity:%d", comment.VideoID)
+	}
+	return err
 }
 
 func (r *commentRepo) Update(ctx context.Context, c *video.Comment) error {

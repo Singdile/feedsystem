@@ -73,14 +73,14 @@ func SetRouter(app *App) *gin.Engine {
 
 	// feed
 	feedRepo := feedrepo.NewFeedRepo(app.Cache, app.DB)
-	ratingProvider := videorepo.NewRatingRepo(app.DB)
+	ratingProvider := videorepo.NewRatingRepo(app.DB, app.Cache)
 	feedSvc := feedsvc.NewFeedService(feedRepo, videoRepo, ratingProvider)
 	feedHandler := feed.NewHandler(feedSvc)
 	r.GET("/api/v1/feed", authmiddle.OptionalAuthMiddleWare(app.Cache), feedHandler.ListFeed)
 	r.GET("/api/v1/feed/tag", authmiddle.OptionalAuthMiddleWare(app.Cache), feedHandler.ListByTag)
 
 	// rating video
-	ratingRepo := videorepo.NewRatingRepo(app.DB)
+	ratingRepo := videorepo.NewRatingRepo(app.DB, app.Cache)
 	mqRepo := videorepo.NewRatingMQ(app.RatingMQPub)
 	ratingSvc := videosvc.NewRatingService(ratingRepo, videoRepo, mqRepo)
 	ratingHandler := video.NewRatingHandler(ratingSvc)
@@ -93,7 +93,7 @@ func SetRouter(app *App) *gin.Engine {
 	}
 
 	// comment
-	commentRepo := videorepo.NewCommentRepo(app.DB)
+	commentRepo := videorepo.NewCommentRepo(app.DB, app.Cache)
 	commentMQ := videorepo.NewCommentMQ(app.CommentMQPub)
 	commentSvc := videosvc.NewCommentService(commentRepo, commentMQ, videoRepo) // videoRepo 有 FindByID → 满足 VideoChecker
 	commentHandler := video.NewCommentHandler(commentSvc)

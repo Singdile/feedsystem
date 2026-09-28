@@ -24,6 +24,14 @@ func main() {
 		log.Fatal(err)
 	}
 	defer data.CloseDB(DB)
+
+	// 连接redis
+	rdb, err := data.NewRedis(config.Conf.RedisConfig)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer rdb.Close()
+
 	// 连接MQ
 	mq, err := data.NewRabbitMQ(config.Conf.RabbitMQConfig)
 	if err != nil {
@@ -42,7 +50,7 @@ func main() {
 	}
 
 	// 启动消费
-	ratingSeter := video.NewRatingRepo(DB)
+	ratingSeter := video.NewRatingRepo(DB, rdb)
 	worker.RunConsumer(ctx, mq, data.RatingQueue, worker.RatingHandler(ratingSeter))
 
 	// 声明comment 拓扑
@@ -51,7 +59,7 @@ func main() {
 	}
 
 	// 启动comment
-	commentWriter := video.NewCommentRepo(DB)
+	commentWriter := video.NewCommentRepo(DB, rdb)
 	worker.RunConsumer(ctx, mq, data.CommentQueue, worker.CommentHandler(commentWriter))
 
 	<-ctx.Done() // 阻塞等待 SIGINT/SIGTERM

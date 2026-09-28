@@ -67,8 +67,9 @@ func seedVideoRatings(t *testing.T, db *gorm.DB, origin video.VideoRating) {
 
 // TestSetRating_StateChange 测试SetRating 对于like count 和 dislike count的计算是否正确
 func TestSetRating_StateChange(t *testing.T) {
-	db := newTestDB(t)        // 准备临时数据库表
-	repo := NewRatingRepo(db) // repo 装配
+	db := newTestDB(t) // 准备临时数据库表
+	cache, _ := newTestRedis(t)
+	repo := NewRatingRepo(db, cache) // repo 装配
 
 	// 准备测试数据
 	tests := []struct {

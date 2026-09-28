@@ -55,6 +55,7 @@ func CommentHandler(repo CommentWriter) MQHandler {
 			_ = dc.Requeue(ctx)
 			return err
 		}
+
 		return dc.Accept(ctx)
 	}
 }
