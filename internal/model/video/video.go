@@ -24,6 +24,7 @@ type Video struct {
 	DeletedAt     gorm.DeletedAt `gorm:"index" json:"-"`
 	LikedCount    uint           `gorm:"not null;default:0" json:"liked_count"`
 	DislikedCount uint           `gorm:"not null;default:0" json:"disliked_count"`
+	CommentCount  uint           `gorm:"not null;default:0" json:"comment_count"` // 视频评论总数
 }
 
 // InitReq 上传视频请求参数
@@ -85,13 +86,17 @@ type CoverResp struct {
 }
 
 type VideoView struct {
-	ID          uint      `json:"id"`
-	Title       string    `json:"title"`
-	Description string    `json:"description,omitempty"`
-	Author      Author    `json:"author"`
-	PlayURL     string    `json:"play_url"`
-	CoverURL    string    `json:"cover_url,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID            uint      `json:"id"`
+	Title         string    `json:"title"`
+	Description   string    `json:"description,omitempty"`
+	Author        Author    `json:"author"`
+	PlayURL       string    `json:"play_url"`
+	CoverURL      string    `json:"cover_url,omitempty"`
+	LikedCount    uint      `json:"liked_count"`
+	DislikedCount uint      `json:"disliked_count"`
+	CommentCount  uint      `json:"comment_count"` // 视频评论总数
+	Status        int8      `json:"status"`        // 用户对视频的评价。未登录默认为0
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 // Cursor 游标：上一页最后一条的 (created_at, id)

@@ -63,10 +63,56 @@ func (a *AuthSecret) JWTAuthMiddleWare(cache *data.RedisClient) gin.HandlerFunc 
 	}
 }
 
+// OptionalAuthMiddleWare 可选的认证中间件
+// 当token无效的时候，设置为匿名用户；user_id = 0 ; username= ""
+// 当有token有效的时候设置为对应的用户
+func (a *AuthSecret) OptionalAuthMiddleWare(cache *data.RedisClient) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		tokenstr := extractBearer(c.GetHeader("Authorization"))
+		if tokenstr == "" {
+			setUserInfo(c, 0, "")
+			c.Next()
+			return
+		}
+
+		// 验证accessn-token是否有效
+		claim, err := jwt.ParseToken(a.key, tokenstr)
+		if err != nil {
+			setUserInfo(c, 0, "")
+			c.Next()
+			return
+		}
+
+		// jwt撤销检测。有效会话的 account:%d 必须存在且与当前token一致；
+		// 键缺失（登出/被踢）或值不一致（轮换/换设备覆盖）一律视为已失效。
+		if cache != nil {
+			ctx, cancel := context.WithTimeout(c.Request.Context(), 100*time.Millisecond)
+			defer cancel()
+
+			oldtoken, err := cache.Get(ctx, cache.Key("account:%d", claim.AccountID))
+			if err != nil || oldtoken != tokenstr {
+				setUserInfo(c, 0, "")
+				c.Next()
+				return
+			}
+		}
+
+		// 2.如果有效，允许通过
+		// 设置用户信息，方便后续的接口调用
+		setUserInfo(c, claim.AccountID, claim.Username)
+		c.Next()
+	}
+}
+
 func extractBearer(header string) string {
 	const prefix = "Bearer "
 	if len(header) > len(prefix) && header[:len(prefix)] == prefix {
 		return header[len(prefix):]
 	}
 	return ""
+}
+
+func setUserInfo(c *gin.Context, accountID uint, username string) {
+	c.Set("user_id", accountID)
+	c.Set("username", username)
 }

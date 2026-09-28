@@ -46,18 +46,25 @@ type VideoProvider interface {
 	BuildViews(ctx context.Context, vs []video.Video) ([]video.VideoView, error)
 }
 
+type RatingProvider interface {
+	GetRating(ctx context.Context, videoID, accountID uint) (int8, error)
+	GetRatings(ctx context.Context, videoID []uint, accountID uint) (map[uint]int8, error)
+}
+
 type FeedService struct {
 	repo       FeedRepo
 	videoSvc   VideoProvider
+	ratingSvc  RatingProvider
 	localcache *cache.Cache       // go-cache:L1,默认5s过期
 	group      singleflight.Group // 防并发
 }
 
-func NewFeedService(repo FeedRepo, videoSvc VideoProvider) *FeedService {
+func NewFeedService(repo FeedRepo, videoSvc VideoProvider, ratingSvc RatingProvider) *FeedService {
 	return &FeedService{
 		repo:       repo,
 		videoSvc:   videoSvc,
 		localcache: cache.New(l1CacheTTL, 10*time.Second),
+		ratingSvc:  ratingSvc,
 	}
 }
 
@@ -81,7 +88,7 @@ type FeedListResult struct {
 //	2.1 查询并获取热区数据(ids)对应的视频元数据
 //	2.2 当热区数据满足一页，使用视频元数据，签发对象存储可播放url并返回
 //	2.2 当热区数据没有了且当前获取的视频元数据不足一页(limit)的时候，从数据库中获取冷数据补充完一页，签发对象存储可播放url并返回
-func (s *FeedService) ListFeed(ctx context.Context, cursorStr string, limit int) (*FeedListResult, error) {
+func (s *FeedService) ListFeed(ctx context.Context, accountID uint, cursorStr string, limit int) (*FeedListResult, error) {
 	// 解析游标
 	if limit <= 0 {
 		limit = 20
@@ -107,12 +114,12 @@ func (s *FeedService) ListFeed(ctx context.Context, cursorStr string, limit int)
 	tail, err := s.repo.ZRangeWithScores(ctx, timelineKey, 0, 0)
 	if err != nil {
 		// redis fail -> DB
-		return s.listLatestFromDB(ctx, cursor, limit)
+		return s.listLatestFromDB(ctx, accountID, cursor, limit)
 	}
 
 	// ZSET 中feed:global_time 为空，重建
 	if len(tail) == 0 {
-		return s.rebuildAndRetry(ctx, cursorStr, cursor, limit)
+		return s.rebuildAndRetry(ctx, accountID, cursorStr, cursor, limit)
 	}
 
 	watermark := tail[0].Score                 // 冷热数据分界线
@@ -122,13 +129,13 @@ func (s *FeedService) ListFeed(ctx context.Context, cursorStr string, limit int)
 	}
 
 	if reqTime <= watermark { // 请求的时间比热门最老的视频还要老，那么直接查询DB,不写回ZSET
-		return s.listLatestFromDB(ctx, cursor, limit)
+		return s.listLatestFromDB(ctx, accountID, cursor, limit)
 	}
 
 	// 热数据路径，查询缓存中的timeline,获取时间排序的视频
 	members, err := s.repo.ZRevRangeByScore(ctx, timelineKey, curScore, curID, limit+1)
 	if err != nil {
-		return s.listLatestFromDB(ctx, cursor, limit)
+		return s.listLatestFromDB(ctx, accountID, cursor, limit)
 	}
 
 	hotMore := len(members) > limit // 热区(ZSET)是否还有超过一页的更多数据（limit+1 探测）
@@ -192,6 +199,11 @@ func (s *FeedService) ListFeed(ctx context.Context, cursorStr string, limit int)
 	videoViews, err := s.videoSvc.BuildViews(ctx, entities)
 	if err != nil {
 		return nil, apperrors.NewAppError(http.StatusInternalServerError, "get videos failed")
+	}
+
+	// 获取用户对视频的评价信息
+	if _, err = s.stampStatus(ctx, accountID, videoViews); err != nil {
+		log.Printf("failed to stamp views: %v", err)
 	}
 
 	return &FeedListResult{Items: videoViews, NextCursor: next}, nil
@@ -296,7 +308,7 @@ func (s *FeedService) GetVideoByIDs(ctx context.Context, ids []uint) ([]video.Vi
 }
 
 // listLatestFromDB DB兜底，直接从数据库中获取最新的视频信息并签发
-func (s *FeedService) listLatestFromDB(ctx context.Context, cursor *video.Cursor, limit int) (*FeedListResult, error) {
+func (s *FeedService) listLatestFromDB(ctx context.Context, account uint, cursor *video.Cursor, limit int) (*FeedListResult, error) {
 	// DB中获取数据
 	vs, err := s.repo.ListLatest(ctx, cursor, limit+1)
 	if err != nil {
@@ -314,6 +326,10 @@ func (s *FeedService) listLatestFromDB(ctx context.Context, cursor *video.Cursor
 	views, err := s.videoSvc.BuildViews(ctx, vs)
 	if err != nil {
 		return nil, err
+	}
+
+	if _, err := s.stampStatus(ctx, account, views); err != nil {
+		log.Printf("failed to stamp views: %v", err)
 	}
 
 	// 回填 L2;L1
@@ -341,7 +357,7 @@ func (s *FeedService) listLatestFromDB(ctx context.Context, cursor *video.Cursor
 }
 
 // rebuildAndRetry ZSET为空的时候重建，从DB中拉取最近的1000条回填 Redis，然后重新走 ListFeed
-func (s *FeedService) rebuildAndRetry(ctx context.Context, cursorStr string, cursor *video.Cursor, limit int) (*FeedListResult, error) {
+func (s *FeedService) rebuildAndRetry(ctx context.Context, accountID uint, cursorStr string, cursor *video.Cursor, limit int) (*FeedListResult, error) {
 	res, err, _ := s.group.Do("sf:rebuild:global_time", func() (any, error) {
 		videos, err := s.repo.ListLatest(ctx, nil, 1000)
 		if err != nil {
@@ -366,17 +382,17 @@ func (s *FeedService) rebuildAndRetry(ctx context.Context, cursorStr string, cur
 	})
 
 	if err != nil {
-		return s.listLatestFromDB(ctx, cursor, limit)
+		return s.listLatestFromDB(ctx, accountID, cursor, limit)
 	}
 
 	if s, ok := res.(string); ok && s == "EMPTY_DB" {
 		return &FeedListResult{Items: []video.VideoView{}}, nil
 	}
 
-	return s.ListFeed(ctx, cursorStr, limit)
+	return s.ListFeed(ctx, accountID, cursorStr, limit)
 }
 
-func (s *FeedService) ListByTag(ctx context.Context, tagName, cursorStr string, limit int) (*FeedListResult, error) {
+func (s *FeedService) ListByTag(ctx context.Context, accountID uint, tagName, cursorStr string, limit int) (*FeedListResult, error) {
 	if strings.TrimSpace(tagName) == "" {
 		return nil, apperrors.NewAppError(http.StatusBadRequest, "参数错误")
 	}
@@ -422,8 +438,34 @@ func (s *FeedService) ListByTag(ctx context.Context, tagName, cursorStr string, 
 		next = video.EncodeCursor(cur)
 	}
 
+	if _, err := s.stampStatus(ctx, accountID, views); err != nil {
+		log.Printf("fail to get user's rating status,err:%v", err)
+	}
+
 	return &FeedListResult{
 		Items:      views,
 		NextCursor: next,
 	}, nil
+}
+
+// stampStatus 查询用户用户对于一批视频的评价，匿名用户保持评价的默认值就行了
+func (s *FeedService) stampStatus(ctx context.Context, accountID uint, views []video.VideoView) ([]video.VideoView, error) {
+	if accountID == 0 || len(views) == 0 {
+		return views, nil
+	}
+
+	ids := make([]uint, 0, len(views))
+	for _, v := range views {
+		ids = append(ids, v.ID)
+	}
+
+	statusMap, err := s.ratingSvc.GetRatings(ctx, ids, accountID)
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range views {
+		views[i].Status = statusMap[views[i].ID]
+	}
+	return views, nil
 }

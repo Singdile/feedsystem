@@ -24,11 +24,40 @@ func (r *commentRepo) Create(ctx context.Context, c *video.Comment) error {
 		return errors.New("empty comment or invalid params")
 	}
 
-	return r.db.WithContext(ctx).Create(c).Error
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		err := tx.Create(c).Error
+		if err != nil {
+			return err
+		}
+		//db.Model(&product).Update("price", gorm.Expr("price * ? + ?", 2, 100))
+		err = tx.Model(&video.Video{}).Where("id = ?", c.VideoID).Update("comment_count", gorm.Expr("comment_count + 1")).Error
+		if err != nil {
+			return err
+		}
+
+		return nil
+	})
 }
 
 func (r *commentRepo) Delete(ctx context.Context, commentID uint) error {
-	return r.db.WithContext(ctx).Delete(&video.Comment{}, commentID).Error
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var comment video.Comment
+		err := tx.Model(&video.Comment{}).Where("id = ?", commentID).Find(&comment).Error
+		if err != nil {
+			return err
+		}
+
+		err = tx.WithContext(ctx).Delete(&video.Comment{}, commentID).Error
+		if err != nil {
+			return err
+		}
+		err = tx.Model(&video.Video{}).Where("id = ?", comment.VideoID).Update("comment_count", gorm.Expr("GREATEST(comment_count - 1, 0)")).Error
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+
 }
 
 func (r *commentRepo) Update(ctx context.Context, c *video.Comment) error {

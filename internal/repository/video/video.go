@@ -319,9 +319,12 @@ func (r *videoRepo) signVideoView(ctx context.Context, v *video.Video) (*video.V
 			ID:       v.AuthorID,
 			Username: v.Username,
 		},
-		PlayURL:   play,
-		CoverURL:  cover,
-		CreatedAt: v.CreatedAt,
+		PlayURL:       play,
+		CoverURL:      cover,
+		CreatedAt:     v.CreatedAt,
+		LikedCount:    v.LikedCount,
+		DislikedCount: v.DislikedCount,
+		CommentCount:  v.CommentCount,
 	}, nil
 
 }

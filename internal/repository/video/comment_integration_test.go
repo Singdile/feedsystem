@@ -3,6 +3,7 @@ package video
 import (
 	"feedsystem/internal/model/video"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -85,6 +86,63 @@ func TestCommentRepo_Create(t *testing.T) {
 			require.False(t, saved.CreatedAt.IsZero())
 		})
 	}
+}
+
+// 测试create comment 能不能同步添加到video中的comment_count字段
+func TestCommentRepo_CreateAndDelete(t *testing.T) {
+	db := newTestDB(t)
+	repo := NewCommentRepo(db)
+
+	seedVideo(t, db, video.Video{
+		ID:            1,
+		AuthorID:      0,
+		Username:      "",
+		Title:         "",
+		Description:   "",
+		VideoKey:      "",
+		CoverKey:      "",
+		CreatedAt:     time.Time{},
+		DeletedAt:     gorm.DeletedAt{},
+		LikedCount:    0,
+		DislikedCount: 0,
+		CommentCount:  0,
+	})
+
+	err := repo.Create(t.Context(), &video.Comment{
+		ID:        1,
+		VideoID:   1,
+		AuthorID:  1,
+		AccountID: 1,
+		UserName:  "test1",
+		Content:   "test1",
+	})
+
+	var saved video.Video
+	err = db.Find(&saved, "id = ?", 1).Error
+	require.NoError(t, err)
+	require.Equal(t, uint(1), saved.CommentCount)
+
+	err = repo.Create(t.Context(), &video.Comment{
+		ID:        2,
+		VideoID:   1,
+		AuthorID:  1,
+		AccountID: 2,
+		UserName:  "test2",
+		Content:   "test2",
+	})
+	err = db.Find(&saved, "id = ?", 1).Error
+	require.NoError(t, err)
+	require.Equal(t, uint(2), saved.CommentCount)
+
+	err = repo.Delete(t.Context(), uint(1))
+	err = db.Find(&saved, "id = ?", 1).Error
+	require.NoError(t, err)
+	require.Equal(t, uint(1), saved.CommentCount)
+
+	err = repo.Delete(t.Context(), uint(2))
+	err = db.Find(&saved, "id = ?", 1).Error
+	require.NoError(t, err)
+	require.Equal(t, uint(0), saved.CommentCount)
 }
 
 func TestCommentRepo_ListByVideoID(t *testing.T) {

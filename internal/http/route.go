@@ -73,10 +73,11 @@ func SetRouter(app *App) *gin.Engine {
 
 	// feed
 	feedRepo := feedrepo.NewFeedRepo(app.Cache, app.DB)
-	feedSvc := feedsvc.NewFeedService(feedRepo, videoRepo)
+	ratingProvider := videorepo.NewRatingRepo(app.DB)
+	feedSvc := feedsvc.NewFeedService(feedRepo, videoRepo, ratingProvider)
 	feedHandler := feed.NewHandler(feedSvc)
-	r.GET("/api/v1/feed", feedHandler.ListFeed)
-	r.GET("/api/v1/feed/tag", feedHandler.ListByTag)
+	r.GET("/api/v1/feed", authmiddle.OptionalAuthMiddleWare(app.Cache), feedHandler.ListFeed)
+	r.GET("/api/v1/feed/tag", authmiddle.OptionalAuthMiddleWare(app.Cache), feedHandler.ListByTag)
 
 	// rating video
 	ratingRepo := videorepo.NewRatingRepo(app.DB)

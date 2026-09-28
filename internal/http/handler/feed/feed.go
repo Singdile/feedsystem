@@ -26,7 +26,15 @@ func (h *Handler) ListFeed(c *gin.Context) {
 		response.Fail(c, http.StatusBadRequest, "参数错误")
 		return
 	}
-	res, err := h.svc.ListFeed(c.Request.Context(), cursor, limit)
+
+	accountIDstr, _ := c.Get("user_id")
+	accountID, ok := accountIDstr.(uint)
+	if !ok {
+		response.Fail(c, http.StatusBadRequest, "参数错误")
+		return
+	}
+
+	res, err := h.svc.ListFeed(c.Request.Context(), uint(accountID), cursor, limit)
 	if err != nil {
 		response.FromError(c, err)
 		return
@@ -50,7 +58,14 @@ func (h *Handler) ListByTag(c *gin.Context) {
 		return
 	}
 
-	res, err := h.svc.ListByTag(c.Request.Context(), tagName, cursor, limit)
+	accountIDstr, _ := c.Get("user_id")
+	accountID, ok := accountIDstr.(uint)
+	if !ok {
+		response.Fail(c, http.StatusBadRequest, "参数错误")
+		return
+	}
+
+	res, err := h.svc.ListByTag(c.Request.Context(), uint(accountID), tagName, cursor, limit)
 	if err != nil {
 		response.FromError(c, err)
 		return
