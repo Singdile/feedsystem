@@ -28,18 +28,31 @@ func (r *commentRepo) Create(ctx context.Context, c *video.Comment) error {
 		return errors.New("empty comment or invalid params")
 	}
 
+	// 调用方未提供幂等键时补一个，避免空串撞唯一索引（正常业务路径由 service 提前生成）
+	if c.EventID == "" {
+		c.EventID = randHex(16)
+	}
+
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		err := tx.Create(c).Error
-		if err != nil {
+		// 幂等：同一 event_id 已存在则跳过（不插入、不计数）
+		var cnt int64
+		if err := tx.Model(&video.Comment{}).Where("event_id = ?", c.EventID).Count(&cnt).Error; err != nil { //数据库错误
 			return err
 		}
-		//db.Model(&product).Update("price", gorm.Expr("price * ? + ?", 2, 100))
-		err = tx.Model(&video.Video{}).Where("id = ?", c.VideoID).Update("comment_count", gorm.Expr("comment_count + 1")).Error
-		if err != nil {
+		if cnt > 0 { // 已经创建过
+			return nil
+		}
+
+		if err := tx.Create(c).Error; err != nil {
+			if errors.Is(err, gorm.ErrDuplicatedKey) { // 并发兜底
+				return nil
+			}
 			return err
 		}
 
-		return nil
+		// 只有真正新插入才 comment_count + 1
+		err := tx.Model(&video.Video{}).Where("id = ?", c.VideoID).Update("comment_count", gorm.Expr("comment_count + 1")).Error
+		return err
 	})
 
 	if err != nil {

@@ -90,7 +90,10 @@ func TestPublishComment(t *testing.T) {
 			ErrCode:   0,
 			Setup: func(m *MockCommentRepo, c *MockCommentMQ, v *MockVideoChecker) {
 				v.On("FindByID", mock.Anything, uint(1)).Return(&video.Video{ID: uint(1), AuthorID: uint(1)}, nil)
-				c.On("Publish", mock.Anything, &video.Comment{VideoID: uint(1), AuthorID: uint(1), AccountID: uint(1), UserName: "user1", Content: "成功走MQ content"}).Return(nil)
+				c.On("Publish", mock.Anything, mock.MatchedBy(func(c *video.Comment) bool {
+					return c.VideoID == 1 && c.AuthorID == 1 && c.AccountID == 1 &&
+						c.UserName == "user1" && c.Content == "成功走MQ content" && c.EventID != ""
+				})).Return(nil)
 			},
 		},
 		{

@@ -161,9 +161,11 @@ func TestCommentRepo_ListByVideoID(t *testing.T) {
 		{VideoID: 2, AuthorID: 1, AccountID: 2, Content: "video2-2", UserName: "test"},
 	}
 	for _, c := range v1 {
+		c.EventID = randHex(16)
 		require.NoError(t, db.Create(c).Error) // db.Create 会回填 ID/CreatedAt
 	}
 	for _, c := range v2 {
+		c.EventID = randHex(16)
 		require.NoError(t, db.Create(c).Error)
 	}
 

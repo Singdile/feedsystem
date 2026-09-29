@@ -27,7 +27,7 @@ func (mq *commentMQ) Publish(ctx context.Context, c *video.Comment) error {
 	}
 
 	event := video.CommentEvent{
-		EventID:    randHex(16),
+		EventID:    c.EventID,
 		Action:     "publish",
 		VideoID:    c.VideoID,
 		AuthorID:   c.AuthorID,

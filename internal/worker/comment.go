@@ -43,6 +43,7 @@ func CommentHandler(repo CommentWriter) MQHandler {
 
 		// 组装
 		var comment = video.Comment{
+			EventID:   event.EventID,
 			VideoID:   event.VideoID,
 			AuthorID:  event.AuthorID,
 			AccountID: event.AccountID,

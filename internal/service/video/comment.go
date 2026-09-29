@@ -64,7 +64,9 @@ func (s *CommentService) Publish(ctx context.Context, videoID, accountID uint, u
 		return apperrors.NewAppError(http.StatusInternalServerError, "查询视频失败")
 	}
 
+	eventID := randHex(16)
 	comment := &video.Comment{
+		EventID:   eventID,
 		VideoID:   videoID,
 		AccountID: accountID,
 		Content:   content,
