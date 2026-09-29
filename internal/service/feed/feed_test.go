@@ -51,7 +51,8 @@ func (m *MockFeedRepo) SetBytes(ctx context.Context, key string, value []byte, t
 // 冷数据查询  mock 的方法
 func (m *MockFeedRepo) ListLatest(ctx context.Context, cursor *video.Cursor, limit int) ([]video.Video, error) {
 	args := m.Called(ctx, cursor, limit)
-	return args.Get(0).([]video.Video), args.Error(1)
+	v, _ := args.Get(0).([]video.Video)
+	return v, args.Error(1)
 }
 
 type MockVideoProvider struct {
@@ -64,11 +65,13 @@ func (m *MockVideoProvider) ListByTag(ctx context.Context, tagName string, curso
 }
 func (m *MockVideoProvider) GetVideoEntitiesByIDs(ctx context.Context, ids []uint) ([]video.Video, error) {
 	args := m.Called(ctx, ids)
-	return args.Get(0).([]video.Video), args.Error(1)
+	v, _ := args.Get(0).([]video.Video)
+	return v, args.Error(1)
 }
 func (m *MockVideoProvider) BuildViews(ctx context.Context, vs []video.Video) ([]video.VideoView, error) {
 	args := m.Called(ctx, vs)
-	return args.Get(0).([]video.VideoView), args.Error(1)
+	v, _ := args.Get(0).([]video.VideoView)
+	return v, args.Error(1)
 }
 
 type MockRatingProvider struct {
@@ -607,4 +610,51 @@ func TestListFeed_LoggedInLikedStatus(t *testing.T) {
 	require.Equal(t, int8(1), ans[0].Status)
 	require.Equal(t, int8(-1), ans[1].Status)
 	require.Equal(t, int8(0), ans[2].Status)
+}
+
+// 测试当热区 zset 里面有数据，但是三层缓存查询出来的视频为空的时候
+// 能否自动查询DB返回
+func TestListFeed_DeletedVideo(t *testing.T) {
+	cache, _ := newTestCache(t)
+	repo := &MockFeedRepo{cache: cache}
+	videoProvider := &MockVideoProvider{}
+	ratingProvider := &MockRatingProvider{}
+	svc := NewFeedService(repo, videoProvider, ratingProvider)
+	ctx := context.Background()
+
+	// 准备zset数据
+	past := time.Now().Add(-time.Minute).UnixMilli()
+	cache.ZAdd(t.Context(), "feed:global_timeline", feed.ZMember{
+		Score:  float64(past),
+		Member: "999",
+	}) // 最老
+	cache.ZAdd(t.Context(), "feed:global_timeline", feed.ZMember{
+		Score:  float64(past + 1000),
+		Member: "1000",
+	}) // 最新的
+
+	// 选中热区数据三层查询之后为空
+	videoProvider.On("GetVideoEntitiesByIDs", mock.Anything, mock.Anything).Return([]video.Video{}, nil)
+	// 转到直接查询数据库
+	repo.On("ListLatest", mock.Anything, mock.Anything, mock.Anything).Return([]video.Video{
+		{
+			ID:       2,
+			AuthorID: 2,
+		},
+	}, nil).Once()
+	videoProvider.On("BuildViews", mock.Anything, []video.Video{{ID: 2, AuthorID: 2}}).Return([]video.VideoView{
+		{
+			ID:    2,
+			Title: "video2",
+		},
+	}, nil)
+
+	res, err := svc.ListFeed(ctx, 0, "", 1)
+
+	// 断言
+	require.NoError(t, err)
+	require.Equal(t, 1, len(res.Items))
+	require.Equal(t, uint(2), res.Items[0].ID)
+	repo.AssertExpectations(t)
+	videoProvider.AssertExpectations(t)
 }

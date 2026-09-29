@@ -159,6 +159,10 @@ func (s *FeedService) ListFeed(ctx context.Context, accountID uint, cursorStr st
 		return nil, apperrors.NewAppError(http.StatusInternalServerError, "get video failed")
 	}
 
+	if len(ids) > 0 && len(entities) == 0 { //如果热区ids存在，但是查找数据库没有，那么直接查询数据库，防止返回空游标
+		return s.listLatestFromDB(ctx, accountID, cursor, limit)
+	}
+
 	// 冷热缝合：hasMore 初始为"热区是否还有更多"
 	hasMore := hotMore
 	if !hotMore && len(entities) < limit { // 只有热点数据用完并且不满页的时候，会从DB冷区取出数据
