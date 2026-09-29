@@ -17,6 +17,11 @@ build-worker:
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w" -o ./bin/$(APP_WORKER) ./cmd/worker/main.go
 
 
+build-cleanup:
+	@echo "=> 🚀 正在构建二进制文件 [cleanup-timeline]..."
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w" -o ./bin/cleanup-timeline ./cmd/cleanup-timeline
+
+
 run:
 	@echo "=> ⚡ 正在启动应用..."
 	go run ./cmd/main.go
@@ -46,4 +51,4 @@ help:
 	@echo "  make run               - 直接运行项目"
 
 # 6. 【统一声明】.PHONY (放在最后或目标上方，防止冲突)
-.PHONY: all build build-worker run test tidy clean help
+.PHONY: all build build-worker build-cleanup run test tidy clean help
