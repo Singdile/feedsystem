@@ -107,7 +107,8 @@ type Cursor struct {
 
 // EncodeCursor 采用base64编码，每6bit映射为对应的字符
 func EncodeCursor(cursor Cursor) string {
-	return base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf("%d,%d", cursor.CreatedAt.UnixMilli(), cursor.ID)))
+	src := fmt.Appendf([]byte{}, "%d,%d", cursor.CreatedAt.UnixMilli(), cursor.ID)
+	return base64.RawURLEncoding.EncodeToString(src)
 }
 
 // DecodeCursor 解析cursorStr为cursor

@@ -3,14 +3,17 @@ package http
 
 import (
 	"feedsystem/internal/http/handler/feed"
+	"feedsystem/internal/http/handler/social"
 	"feedsystem/internal/http/handler/user"
 	"feedsystem/internal/http/handler/video"
 	"feedsystem/internal/middleware/auth"
 	"feedsystem/internal/pkg/jwt"
 	feedrepo "feedsystem/internal/repository/feed"
+	socialrepo "feedsystem/internal/repository/social"
 	userrepo "feedsystem/internal/repository/user"
 	videorepo "feedsystem/internal/repository/video"
 	feedsvc "feedsystem/internal/service/feed"
+	socialsvc "feedsystem/internal/service/social"
 	usersvc "feedsystem/internal/service/user"
 	videosvc "feedsystem/internal/service/video"
 
@@ -105,5 +108,19 @@ func SetRouter(app *App) *gin.Engine {
 
 	r.GET("/api/v1/videos/:id/comments", commentHandler.List)                                                // 列表（公开）
 	r.DELETE("/api/v1/comments/:comment_id", authmiddle.JWTAuthMiddleWare(app.Cache), commentHandler.Delete) // 删除（登录）
+
+	// social
+	socialRepo := socialrepo.NewSocialRepo(app.DB)
+	socialSvc := socialsvc.NewSocialService(socialRepo, userRepo)
+	socialHandler := social.NewSocialHandler(socialSvc)
+	socialG := r.Group("/api/v1/social", authmiddle.JWTAuthMiddleWare(app.Cache))
+	{
+		socialG.POST("follow", socialHandler.Follow)
+		socialG.POST("unfollow", socialHandler.UnFollow)
+		socialG.GET("followers", socialHandler.GetFollowers)
+		socialG.GET("following", socialHandler.GetFollowing)
+		socialG.POST("is-followed", socialHandler.IsFollowed)
+		socialG.GET("counts", socialHandler.Counts)
+	}
 	return r
 }
