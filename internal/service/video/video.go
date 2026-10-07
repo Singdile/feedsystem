@@ -39,6 +39,7 @@ type VideoDB interface {
 	List(ctx context.Context, authorID uint, cursor *video.Cursor, limit int) ([]video.Video, error)
 	Delete(ctx context.Context, id uint) error
 	RemoveObject(ctx context.Context, videoKey, coverKey string) error
+	Counts(ctx context.Context, id uint) (int64, error)
 }
 
 // ObjectStore 对象存储操作

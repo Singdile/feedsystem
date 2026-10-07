@@ -173,7 +173,7 @@ func (h *SocialHandler) Counts(c *gin.Context) {
 	}
 
 	response.OK(c, gin.H{
-		"followers_Cnt": followersCnt,
-		"following_Cnt": followingCnt,
+		"follower_count": followersCnt,
+		"vlogger_count":  followingCnt,
 	})
 }

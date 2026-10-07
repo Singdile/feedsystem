@@ -152,3 +152,21 @@ func (h *Handler) GetUserByID(c *gin.Context) {
 
 	response.OK(c, userinfo)
 }
+
+// GetProfile 获取用户主页信息
+// /users/:id/profile
+func (h *Handler) GetProfile(c *gin.Context) {
+	idstr := c.Param("id")
+	id, err := strconv.ParseUint(idstr, 10, 64)
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, "参数错误")
+		return
+	}
+
+	userProfile, err := h.svc.GetProfileByID(c.Request.Context(), uint(id))
+	if err != nil {
+		response.FromError(c, err)
+		return
+	}
+	response.OK(c, userProfile)
+}

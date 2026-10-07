@@ -97,6 +97,7 @@ type VideoView struct {
 	CommentCount  uint      `json:"comment_count"` // 视频评论总数
 	Status        int8      `json:"status"`        // 用户对视频的评价。未登录默认为0
 	CreatedAt     time.Time `json:"created_at"`
+	HashTags      []string  `json:"hash_tags,omitempty"` // 视频标签
 }
 
 // Cursor 游标：上一页最后一条的 (created_at, id)

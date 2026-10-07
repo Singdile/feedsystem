@@ -128,7 +128,7 @@ func newTestCache(t *testing.T) *data.RedisClient {
 func newTestService(t *testing.T) (*UserService, *fakeRepo, *data.RedisClient) {
 	repo := newFakeRepo()
 	rdb := newTestCache(t)
-	svc := NewUserService(repo, rdb)
+	svc := NewUserService(repo, rdb, nil, nil)
 	return svc, repo, rdb
 }
 

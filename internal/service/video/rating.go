@@ -7,7 +7,7 @@ import (
 	"net/http"
 )
 
-// RateRepo 负责video_tags 表的操作(DB)
+// RateRepo 负责video_ratings的操作(DB)
 type RateRepo interface {
 	SetRating(ctx context.Context, videoID, accountID uint, stauts int8) error
 	GetRating(ctx context.Context, videoID, accountID uint) (int8, error)

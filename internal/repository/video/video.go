@@ -201,6 +201,15 @@ func (r *videoRepo) Delete(ctx context.Context, id uint) error {
 		if err := tx.Where("video_id = ?", id).Delete(&video.VideoTag{}).Error; err != nil {
 			return err
 		}
+
+		if err := tx.Where("video_id = ?", id).Delete(&video.VideoRating{}).Error; err != nil {
+			return err
+		}
+
+		if err := tx.Where("video_id = ?", id).Delete(&video.Comment{}).Error; err != nil {
+			return err
+		}
+
 		return tx.Unscoped().Delete(&video.Video{}, id).Error
 	})
 
@@ -287,12 +296,24 @@ func (r *videoRepo) GetVideoEntitiesByIDs(ctx context.Context, ids []uint) ([]vi
 
 // BuildViews 签发视频播放url
 func (r *videoRepo) BuildViews(ctx context.Context, vs []video.Video) ([]video.VideoView, error) {
+	ids := make([]uint, 0, len(vs))
+	for _, v := range vs {
+		ids = append(ids, v.ID)
+	}
+
+	tagsMaps, err := r.GetTagsByVideoIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+
 	views := make([]video.VideoView, 0, len(vs))
 	for i := range vs {
 		v, err := r.signVideoView(ctx, &vs[i])
 		if err != nil {
 			return nil, err
 		}
+
+		v.HashTags = tagsMaps[v.ID]
 		views = append(views, *v)
 	}
 	return views, nil
@@ -327,4 +348,36 @@ func (r *videoRepo) signVideoView(ctx context.Context, v *video.Video) (*video.V
 		CommentCount:  v.CommentCount,
 	}, nil
 
+}
+
+func (r *videoRepo) Counts(ctx context.Context, id uint) (int64, error) {
+	var cnt int64
+	err := r.db.Model(&video.Video{}).Where("author_id = ?", id).Count(&cnt).Error
+
+	return cnt, err
+}
+
+func (r *videoRepo) GetTagsByVideoIDs(ctx context.Context, ids []uint) (map[uint][]string, error) {
+	if len(ids) == 0 {
+		return map[uint][]string{}, errors.New("参数错误，视频ids为空")
+	}
+
+	// select video_tags.video_id,tags.name from video_ids join tags on video_ids.tag_id = tags.id where video_ids.video_id = ?
+	var rows []struct {
+		VideoID uint   `gorm:"column:video_id"`
+		Tagname string `gorm:"column:name"`
+	}
+
+	err := r.db.WithContext(ctx).Model(&video.VideoTag{}).Select("video_tags.video_id,tags.name").Joins("JOIN tags ON video_tags.tag_id = tags.id").Where("video_tags.video_id in (?)", ids).Find(&rows).Error
+
+	if err != nil {
+		return map[uint][]string{}, err
+	}
+
+	res := make(map[uint][]string)
+	for _, v := range rows {
+		res[v.VideoID] = append(res[v.VideoID], v.Tagname)
+	}
+
+	return res, nil
 }

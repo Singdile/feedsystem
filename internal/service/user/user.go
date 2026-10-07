@@ -45,15 +45,26 @@ type CacheRepo interface {
 	GetRefreshByID(ctx context.Context, id uint) (string, error)
 }
 
+type SocialRepo interface {
+	// 返回粉丝数量，关注数量
+	Counts(ctx context.Context, accountID uint) (uint, uint, error)
+}
+
+type VideoRepo interface {
+	Counts(ctx context.Context, id uint) (int64, error)
+}
+
 // UserService 账号业务服务
 type UserService struct {
-	repo  UserRepo
-	cache CacheRepo
+	repo          UserRepo
+	cache         CacheRepo
+	social        SocialRepo
+	videoProvider VideoRepo
 }
 
 // NewUserService 构造账号服务
-func NewUserService(repo UserRepo, cache CacheRepo) *UserService {
-	return &UserService{repo: repo, cache: cache}
+func NewUserService(repo UserRepo, cache CacheRepo, social SocialRepo, videoProvider VideoRepo) *UserService {
+	return &UserService{repo: repo, cache: cache, social: social, videoProvider: videoProvider}
 }
 
 // Register 注册：校验用户名、哈希密码后写入
@@ -249,4 +260,40 @@ func (s *UserService) GetUserByID(ctx context.Context, userid uint) (account.Pro
 	}
 
 	return user.ToProfile(), nil
+}
+
+type UserProfile struct {
+	Profile      account.Profile `json:"profile"`
+	FollowerCnt  uint            `json:"follower_count"`
+	FollowingCnt uint            `json:"vlogger_count"`
+	VideoCnt     int64           `json:"video_count"`
+}
+
+// GetProfileByID 获取用户的基本简介，用户的粉丝和关注数，用户发布的视频数量
+func (s *UserService) GetProfileByID(ctx context.Context, id uint) (*UserProfile, error) {
+	user, err := s.repo.FindByID(ctx, id)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, apperrors.NewAppError(http.StatusNotFound, "用户不存在")
+		}
+		return nil, err
+	}
+	profile := user.ToProfile()
+
+	followerCounts, followingCounts, err := s.social.Counts(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	cnt, err := s.videoProvider.Counts(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	return &UserProfile{
+		Profile:      profile,
+		FollowerCnt:  followerCounts,
+		FollowingCnt: followingCounts,
+		VideoCnt:     cnt,
+	}, nil
 }

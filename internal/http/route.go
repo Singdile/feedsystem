@@ -23,19 +23,41 @@ import (
 // SetRouter 装配全部路由与中间件
 func SetRouter(app *App) *gin.Engine {
 	r := gin.Default()
+	// 中间件装配
+	authmiddle := auth.NewAuthSecret(jwt.SetSecret(app.Secret.Secret))
+
+	// 构造所有依赖
+	userRepo := userrepo.NewuserRepo(app.DB)
+	videoRepo := videorepo.NewVideoRepo(app.MC, app.DB)
+	socialRepo := socialrepo.NewSocialRepo(app.DB)
+	ratingRepo := videorepo.NewRatingRepo(app.DB, app.Cache)
+	commentRepo := videorepo.NewCommentRepo(app.DB, app.Cache)
+	feedRepo := feedrepo.NewFeedRepo(app.Cache, app.DB)
+	videoCacheClean := videorepo.NewVideoCacheCleaner(app.Cache)
+	ratingProvider := videorepo.NewRatingRepo(app.DB, app.Cache)
+	mqRepo := videorepo.NewRatingMQ(app.RatingMQPub)
+	commentMQ := videorepo.NewCommentMQ(app.CommentMQPub)
+
+	// services（依赖 repos）
+	videoSvc := videosvc.NewVideoService(videoRepo, app.Cache, videoCacheClean, app.Cache)
+	userSvc := usersvc.NewUserService(userRepo, app.Cache, socialRepo, videoRepo)
+	feedSvc := feedsvc.NewFeedService(feedRepo, videoRepo, ratingProvider)
+	ratingSvc := videosvc.NewRatingService(ratingRepo, videoRepo, mqRepo)
+	commentSvc := videosvc.NewCommentService(commentRepo, commentMQ, videoRepo)
+	socialSvc := socialsvc.NewSocialService(socialRepo, userRepo)
+
+	// handlers（依赖 services）
+	userHandler := user.NewHandler(userSvc)
+	videoHandler := video.NewHandler(videoSvc)
+	feedHandler := feed.NewHandler(feedSvc)
+	ratingHandler := video.NewRatingHandler(ratingSvc)
+	commentHandler := video.NewCommentHandler(commentSvc)
+	socialHandler := social.NewSocialHandler(socialSvc)
 
 	// 健康检查
 	r.GET("/healthz", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
-
-	// 中间件装配
-	authmiddle := auth.NewAuthSecret(jwt.SetSecret(app.Secret.Secret))
-
-	// 依赖注入，装配
-	userRepo := userrepo.NewuserRepo(app.DB)
-	userSvc := usersvc.NewUserService(userRepo, app.Cache)
-	userHandler := user.NewHandler(userSvc)
 
 	// 用户api
 	r.POST("/api/v1/users", userHandler.Register) //创建用户
@@ -47,6 +69,8 @@ func SetRouter(app *App) *gin.Engine {
 		userG.GET("", userHandler.ListByUserName)          //按照username,使用query查询
 	}
 
+	r.GET("/api/v1/users/:id/profile", userHandler.GetProfile)
+
 	// 认证
 	authG := r.Group("/api/v1/auth")
 	authG.POST("/login", userHandler.Login)     //用户登录
@@ -54,10 +78,6 @@ func SetRouter(app *App) *gin.Engine {
 	authG.POST("/logout", userHandler.Logout)   //注销+服务端踢掉token
 
 	// video
-	videoRepo := videorepo.NewVideoRepo(app.MC, app.DB)
-	videoCacheClean := videorepo.NewVideoCacheCleaner(app.Cache)
-	videoSvc := videosvc.NewVideoService(videoRepo, app.Cache, videoCacheClean, app.Cache)
-	videoHandler := video.NewHandler(videoSvc)
 	uploadG := r.Group("/api/v1/uploads/videos", authmiddle.JWTAuthMiddleWare(app.Cache))
 	{
 		uploadG.POST("/init", videoHandler.Init)
@@ -75,18 +95,10 @@ func SetRouter(app *App) *gin.Engine {
 	r.DELETE("/api/v1/videos/:id", authmiddle.JWTAuthMiddleWare(app.Cache), videoHandler.DeleteVideo)
 
 	// feed
-	feedRepo := feedrepo.NewFeedRepo(app.Cache, app.DB)
-	ratingProvider := videorepo.NewRatingRepo(app.DB, app.Cache)
-	feedSvc := feedsvc.NewFeedService(feedRepo, videoRepo, ratingProvider)
-	feedHandler := feed.NewHandler(feedSvc)
 	r.GET("/api/v1/feed", authmiddle.OptionalAuthMiddleWare(app.Cache), feedHandler.ListFeed)
 	r.GET("/api/v1/feed/tag", authmiddle.OptionalAuthMiddleWare(app.Cache), feedHandler.ListByTag)
 
 	// rating video
-	ratingRepo := videorepo.NewRatingRepo(app.DB, app.Cache)
-	mqRepo := videorepo.NewRatingMQ(app.RatingMQPub)
-	ratingSvc := videosvc.NewRatingService(ratingRepo, videoRepo, mqRepo)
-	ratingHandler := video.NewRatingHandler(ratingSvc)
 	ratingG := r.Group("/api/v1/videos", authmiddle.JWTAuthMiddleWare(app.Cache))
 	{
 		ratingG.GET("/:id/video", videoHandler.GetVideoRating)
@@ -96,11 +108,6 @@ func SetRouter(app *App) *gin.Engine {
 	}
 
 	// comment
-	commentRepo := videorepo.NewCommentRepo(app.DB, app.Cache)
-	commentMQ := videorepo.NewCommentMQ(app.CommentMQPub)
-	commentSvc := videosvc.NewCommentService(commentRepo, commentMQ, videoRepo) // videoRepo 有 FindByID → 满足 VideoChecker
-	commentHandler := video.NewCommentHandler(commentSvc)
-
 	commentAuthG := r.Group("/api/v1/videos/:id/comments", authmiddle.JWTAuthMiddleWare(app.Cache))
 	{
 		commentAuthG.POST("", commentHandler.Publish) // 发布（登录）
@@ -110,9 +117,6 @@ func SetRouter(app *App) *gin.Engine {
 	r.DELETE("/api/v1/comments/:comment_id", authmiddle.JWTAuthMiddleWare(app.Cache), commentHandler.Delete) // 删除（登录）
 
 	// social
-	socialRepo := socialrepo.NewSocialRepo(app.DB)
-	socialSvc := socialsvc.NewSocialService(socialRepo, userRepo)
-	socialHandler := social.NewSocialHandler(socialSvc)
 	socialG := r.Group("/api/v1/social", authmiddle.JWTAuthMiddleWare(app.Cache))
 	{
 		socialG.POST("follow", socialHandler.Follow)
