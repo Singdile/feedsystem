@@ -14,8 +14,8 @@ import (
 const (
 	TimelineExchange   = "video.timeline.events"
 	TimelineQueue      = "video.timeline.update.queue"
-	TimelineBindingKey = "video.timeline.*"
-	TimelinePublishRK  = "video.timeline.publish"
+	TimelineBindingKey = "video.timeline.*"       //队列绑到交换机时用的 binding key
+	TimelinePublishRK  = "video.timeline.publish" //生产者发布信息携带的 routing key
 	RatingExchange     = "rating.events"
 	RatingQueue        = "rating.events"
 	RatingBindingKey   = "rating.*"
@@ -24,6 +24,10 @@ const (
 	CommentQueue       = "comment.events"
 	CommentBindingKey  = "comment.*"
 	CommentPublishRK   = "comment.publish" // 唯一 RK，publish/delete 都走它
+	SocialExchange     = "social.events"   // 关注事件 exchange（仅用于通知，无落库消费者）
+	SocialBindingKey   = "social.*"
+	SocialPublishRK    = "social.follow"
+	NotificationQueue  = "notification.events" // 通知队列（API 进程 NotificationWorker 消费）
 )
 
 type RabbitMQClient struct {
@@ -122,4 +126,29 @@ func (c *RabbitMQClient) DeclareCommentTopology(ctx context.Context) error {
 
 func (c *RabbitMQClient) NewCommentPublisher(ctx context.Context) (*rmq.Publisher, error) {
 	return c.NewPublisher(ctx, rmq.ExchangeAddress{Exchange: CommentExchange, Key: CommentPublishRK})
+}
+
+func (c *RabbitMQClient) DeclareSocialTopology(ctx context.Context) error {
+	return c.DeclareTopology(ctx, SocialExchange, NotificationQueue, SocialBindingKey)
+}
+
+// NewSocialPublisher 创建发布到 social.events exchange 的 publisher
+func (c *RabbitMQClient) NewSocialPublisher(ctx context.Context) (*rmq.Publisher, error) {
+	return c.NewPublisher(ctx, rmq.ExchangeAddress{Exchange: SocialExchange, Key: SocialPublishRK})
+}
+
+// DeclareNotificationTopology 声明Notification 对列，并绑定到rating\comment\social exchange上
+func (c *RabbitMQClient) DeclareNotificationTopology(ctx context.Context) error {
+	// 同一个 notification.events 队列，绑定三个来源 exchange，并且绑定key与之前声明的队列的key相同
+	// 这样，可以同时接收相同的信息了
+	if err := c.DeclareTopology(ctx, RatingExchange, NotificationQueue, RatingBindingKey); err != nil {
+		return err
+	}
+	if err := c.DeclareTopology(ctx, CommentExchange, NotificationQueue, CommentBindingKey); err != nil {
+		return err
+	}
+	if err := c.DeclareTopology(ctx, SocialExchange, NotificationQueue, SocialBindingKey); err != nil {
+		return err
+	}
+	return nil
 }
