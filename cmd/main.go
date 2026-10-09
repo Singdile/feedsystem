@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"feedsystem/internal/pkg/jwt"
 	"feedsystem/internal/worker"
 	"fmt"
 	"log"
@@ -71,8 +72,15 @@ func main() {
 	// 声明topo结构
 	ratingPublisher := initRatingMQ(ctx, mq)
 	commentPublisher := initCommentMQ(ctx, mq)
-	_ = initSocialMQ(ctx, mq)
+	socialPublisher := initSocialMQ(ctx, mq)
 	initNotificationMQ(ctx, mq)
+
+	// 创建 SSEHub
+	hub := worker.NewSSEHub(DB, jwt.SetSecret(conf.JwtConfig.Secret))
+	// 启动 NotificationWorker 消费 notification.events 队列
+	if mq != nil {
+		worker.RunConsumer(ctx, mq, data.NotificationQueue, worker.NotificationHandler(DB, hub))
+	}
 
 	// 装配路由并启动 HTTP 服务
 	app := &http.App{
@@ -83,9 +91,12 @@ func main() {
 		TimelinePub:  timelinePublisher,
 		RatingMQPub:  ratingPublisher,
 		CommentMQPub: commentPublisher,
+		SocialMQPub:  socialPublisher,
 		Secret:       conf.JwtConfig,
 	}
 	router := http.SetRouter(app)
+	hub.RegisterRoutes(router)
+
 	addr := fmt.Sprintf(":%d", conf.AppConfig.Port)
 	log.Printf("Server is running on %s", addr)
 	if err := router.Run(addr); err != nil {

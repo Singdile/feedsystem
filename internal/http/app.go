@@ -17,5 +17,6 @@ type App struct {
 	TimelinePub  *rmq.Publisher
 	RatingMQPub  *rmq.Publisher
 	CommentMQPub *rmq.Publisher
+	SocialMQPub  *rmq.Publisher
 	Secret       config.JwtConfig
 }

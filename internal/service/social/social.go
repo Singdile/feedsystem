@@ -5,6 +5,7 @@ import (
 	"context"
 	"feedsystem/internal/model/account"
 	apperrors "feedsystem/internal/pkg/errors"
+	"log"
 	"net/http"
 )
 
@@ -23,15 +24,21 @@ type UserProvider interface {
 	FindByID(ctx context.Context, id uint) (*account.User, error)
 }
 
+type SocialMQ interface {
+	PublishFollow(ctx context.Context, followerID, vloggerID uint) error
+}
+
 type SocialService struct {
 	repo         SocialRepo
 	userProvider UserProvider
+	socialMQ     SocialMQ
 }
 
-func NewSocialService(db SocialRepo, userprovider UserProvider) *SocialService {
+func NewSocialService(db SocialRepo, userprovider UserProvider, socialMQ SocialMQ) *SocialService {
 	return &SocialService{
 		repo:         db,
 		userProvider: userprovider,
+		socialMQ:     socialMQ,
 	}
 }
 
@@ -59,6 +66,12 @@ func (s *SocialService) Follow(ctx context.Context, fanID, vloggerID uint) error
 		return apperrors.FromError(err)
 	}
 
+	// follow 落库成功之后，发布通知事件
+	if s.socialMQ != nil {
+		if err := s.socialMQ.PublishFollow(ctx, fanID, vloggerID); err != nil {
+			log.Printf("socail follow 事件通知发布失败: %v", err)
+		}
+	}
 	return nil
 }
 
