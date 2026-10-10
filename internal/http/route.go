@@ -38,13 +38,14 @@ func SetRouter(app *App) *gin.Engine {
 	ratingProvider := videorepo.NewRatingRepo(app.DB, app.Cache)
 	mqRepo := videorepo.NewRatingMQ(app.RatingMQPub)
 	commentMQ := videorepo.NewCommentMQ(app.CommentMQPub)
+	popularityMQ := videorepo.NewPopularityMQ(app.PopularityPub)
 
 	// services（依赖 repos）
 	videoSvc := videosvc.NewVideoService(videoRepo, app.Cache, videoCacheClean, app.Cache)
 	userSvc := usersvc.NewUserService(userRepo, app.Cache, socialRepo, videoRepo)
 	feedSvc := feedsvc.NewFeedService(feedRepo, videoRepo, ratingProvider)
-	ratingSvc := videosvc.NewRatingService(ratingRepo, videoRepo, mqRepo)
-	commentSvc := videosvc.NewCommentService(commentRepo, commentMQ, videoRepo)
+	ratingSvc := videosvc.NewRatingService(ratingRepo, videoRepo, mqRepo, popularityMQ)
+	commentSvc := videosvc.NewCommentService(commentRepo, commentMQ, videoRepo, popularityMQ)
 	socialSvc := socialsvc.NewSocialService(socialRepo, userRepo, socialMQ)
 
 	// handlers（依赖 services）
@@ -98,7 +99,7 @@ func SetRouter(app *App) *gin.Engine {
 	// feed
 	r.GET("/api/v1/feed", authmiddle.OptionalAuthMiddleWare(app.Cache), feedHandler.ListFeed)
 	r.GET("/api/v1/feed/tag", authmiddle.OptionalAuthMiddleWare(app.Cache), feedHandler.ListByTag)
-
+	r.GET("/api/v1/feed/popular",authmiddle.OptionalAuthMiddleWare(app.Cache),feedHandler.ListPopular)
 	// rating video
 	ratingG := r.Group("/api/v1/videos", authmiddle.JWTAuthMiddleWare(app.Cache))
 	{

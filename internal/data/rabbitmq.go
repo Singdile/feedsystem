@@ -12,22 +12,26 @@ import (
 )
 
 const (
-	TimelineExchange   = "video.timeline.events"
-	TimelineQueue      = "video.timeline.update.queue"
-	TimelineBindingKey = "video.timeline.*"       //队列绑到交换机时用的 binding key
-	TimelinePublishRK  = "video.timeline.publish" //生产者发布信息携带的 routing key
-	RatingExchange     = "rating.events"
-	RatingQueue        = "rating.events"
-	RatingBindingKey   = "rating.*"
-	RatingPublishRK    = "rating.update"
-	CommentExchange    = "comment.events"
-	CommentQueue       = "comment.events"
-	CommentBindingKey  = "comment.*"
-	CommentPublishRK   = "comment.publish" // 唯一 RK，publish/delete 都走它
-	SocialExchange     = "social.events"   // 关注事件 exchange（仅用于通知，无落库消费者）
-	SocialBindingKey   = "social.*"
-	SocialPublishRK    = "social.follow"
-	NotificationQueue  = "notification.events" // 通知队列（API 进程 NotificationWorker 消费）
+	TimelineExchange     = "video.timeline.events"
+	TimelineQueue        = "video.timeline.update.queue"
+	TimelineBindingKey   = "video.timeline.*"       //队列绑到交换机时用的 binding key
+	TimelinePublishRK    = "video.timeline.publish" //生产者发布信息携带的 routing key
+	RatingExchange       = "rating.events"
+	RatingQueue          = "rating.events"
+	RatingBindingKey     = "rating.*"
+	RatingPublishRK      = "rating.update"
+	CommentExchange      = "comment.events"
+	CommentQueue         = "comment.events"
+	CommentBindingKey    = "comment.*"
+	CommentPublishRK     = "comment.publish" // 唯一 RK，publish/delete 都走它
+	SocialExchange       = "social.events"   // 关注事件 exchange（仅用于通知，无落库消费者）
+	SocialBindingKey     = "social.*"
+	SocialPublishRK      = "social.follow"
+	NotificationQueue    = "notification.events" // 通知队列（API 进程 NotificationWorker 消费）
+	PopularityExchange   = "popularity.events"   // 热榜交换机
+	PopularityQueue      = "popularity.events"   // 热榜事件队列
+	PopularityBindingKey = "popularity.*"        // 队列绑定到交换机的 key
+	PopularityPublishRK  = "popularity.update"   // 热榜事件发布者发布到交换机的KEY
 )
 
 type RabbitMQClient struct {
@@ -151,4 +155,13 @@ func (c *RabbitMQClient) DeclareNotificationTopology(ctx context.Context) error 
 		return err
 	}
 	return nil
+}
+
+// DeclarePopularityTopology 声明popularity MQ  (exchange, queue, bindKey)
+func (c *RabbitMQClient) DeclarePopularityTopology(ctx context.Context) error {
+	return c.DeclareTopology(ctx, PopularityExchange, PopularityQueue, PopularityBindingKey)
+}
+
+func (c *RabbitMQClient) NewPopularityPublisher(ctx context.Context) (*rmq.Publisher, error) {
+	return c.NewPublisher(ctx, rmq.ExchangeAddress{Exchange: PopularityExchange, Key: PopularityPublishRK})
 }

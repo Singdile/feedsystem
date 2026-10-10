@@ -62,5 +62,12 @@ func main() {
 	commentWriter := video.NewCommentRepo(DB, rdb)
 	worker.RunConsumer(ctx, mq, data.CommentQueue, worker.CommentHandler(commentWriter))
 
+	// 启动popularity worker
+	if err := mq.DeclarePopularityTopology(topoCtx); err != nil {
+		log.Fatalf("failed to declare popularity topology: %v", err)
+	}
+	popularityCache := video.NewPopularityRepo(rdb)
+	worker.RunConsumer(ctx, mq, data.PopularityQueue, worker.PopularityHandler(popularityCache))
+
 	<-ctx.Done() // 阻塞等待 SIGINT/SIGTERM
 }

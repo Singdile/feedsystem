@@ -181,6 +181,22 @@ func (c *RedisClient) ZRem(ctx context.Context, key string, member string) error
 	return c.rdb.ZRem(ctx, key, member).Err()
 }
 
+func (c *RedisClient) Expire(ctx context.Context, key string, expire time.Duration) error {
+	_, err := c.rdb.Expire(ctx, key, expire).Result()
+	return err
+}
+
+func (c *RedisClient) ZIncrBy(ctx context.Context, key, member string, delta float64) error {
+	return c.rdb.ZIncrBy(ctx, key, delta, member).Err()
+}
+
+func (c *RedisClient) ZUnionStore(ctx context.Context, dest string, keys []string, aggregate string) error {
+	_, err := c.rdb.ZUnionStore(ctx, dest, &redis.ZStore{Keys: keys, Aggregate: aggregate}).Result()
+	return err
+}
+
+
+
 // MGet 批量读取多个key的元素
 func (c *RedisClient) MGet(ctx context.Context, keys ...string) ([]any, error) {
 	return c.rdb.MGet(ctx, keys...).Result()
@@ -232,4 +248,39 @@ func randHex(n int) string {
 
 func IsMiss(err error) bool {
 	return errors.Is(err, redis.Nil)
+}
+// ZRevRange 按排名区间 [start, stop] 返回 member（score 降序）
+func (c *RedisClient) ZRevRange(ctx context.Context, key string, start, stop int64) ([]feed.ZMember, error) {
+	res, err := c.rdb.ZRangeArgsWithScores(ctx, redis.ZRangeArgs{
+		Key: key, Start: strconv.FormatInt(start, 10), Stop: strconv.FormatInt(stop, 10),
+		ByScore: false, ByLex: false, Rev: true,
+	}).Result()
+	if err != nil {
+		return nil, err
+	}
+	// 转 []feed.ZMember（同 ZRangeWithScores 的转换逻辑）
+	// 将结果转换为 []feed.ZMember
+	out := make([]feed.ZMember, 0, len(res))
+	for _, m := range res {
+		score := m.Score
+		member, ok := m.Member.(string)
+		if !ok {
+			member = fmt.Sprintf("%v", m.Member)
+		}
+		out = append(out, feed.ZMember{
+			Score:  score,
+			Member: member,
+		})
+	}
+
+	return out,nil
+}
+
+func (c *RedisClient) Exists(ctx context.Context, key string) (bool, error) {
+	_,err := c.rdb.Exists(ctx,key).Result()
+	if err != nil {
+		return false,err
+	}
+
+	return true,nil
 }

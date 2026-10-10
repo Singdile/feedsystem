@@ -55,6 +55,13 @@ func (m *MockCommentMQ) Delete(ctx context.Context, commentID uint) error {
 	return args.Error(0)
 }
 
+// stubPopularityMQ 热度发布 stub（评论测试不关心热度，返回 nil）
+type stubPopularityMQ struct{}
+
+func (stubPopularityMQ) UpdatePopularity(ctx context.Context, videoID uint, change float64) error {
+	return nil
+}
+
 type MockVideoChecker struct {
 	mock.Mock
 }
@@ -176,7 +183,7 @@ func TestPublishComment(t *testing.T) {
 			commentRepo := &MockCommentRepo{}
 			commentMQ := &MockCommentMQ{}
 			videoChecker := &MockVideoChecker{}
-			svc := NewCommentService(commentRepo, commentMQ, videoChecker)
+			svc := NewCommentService(commentRepo, commentMQ, videoChecker, stubPopularityMQ{})
 
 			if tt.Setup != nil {
 				tt.Setup(commentRepo, commentMQ, videoChecker)
@@ -281,7 +288,7 @@ func TestDeleteComment(t *testing.T) {
 			commentRepo := &MockCommentRepo{}
 			commentMQ := &MockCommentMQ{}
 			videoChecker := &MockVideoChecker{}
-			svc := NewCommentService(commentRepo, commentMQ, videoChecker)
+			svc := NewCommentService(commentRepo, commentMQ, videoChecker, stubPopularityMQ{})
 			if tt.Setup != nil {
 				tt.Setup(commentRepo, commentMQ)
 			}
@@ -355,7 +362,7 @@ func TestListComments(t *testing.T) {
 			commentRepo := &MockCommentRepo{}
 			commentMQ := &MockCommentMQ{}
 			videoChecker := &MockVideoChecker{}
-			svc := NewCommentService(commentRepo, commentMQ, videoChecker)
+			svc := NewCommentService(commentRepo, commentMQ, videoChecker, stubPopularityMQ{})
 			if tt.Setup != nil {
 				tt.Setup(commentRepo)
 			}

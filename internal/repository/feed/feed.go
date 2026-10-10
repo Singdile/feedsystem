@@ -9,13 +9,13 @@ import (
 	"time"
 
 	"gorm.io/gorm"
-
 )
+
 type feedRepo struct {
 	cache *data.RedisClient
 	db    *gorm.DB
-
 }
+
 func NewFeedRepo(cache *data.RedisClient, db *gorm.DB) *feedRepo {
 	return &feedRepo{cache: cache, db: db}
 }
@@ -68,4 +68,20 @@ func (r *feedRepo) GetBytes(ctx context.Context, key string) ([]byte, error) {
 // SetBytes 设置二进制形式的redis元素
 func (r *feedRepo) SetBytes(ctx context.Context, key string, val []byte, ttl time.Duration) error {
 	return r.cache.SetBytes(ctx, key, val, ttl)
+}
+
+func (r *feedRepo) ZUnionStore(ctx context.Context, dest string, keys []string, aggregate string) error {
+	return r.cache.ZUnionStore(ctx,dest,keys,aggregate)
+}
+
+func (r *feedRepo) Expire(ctx context.Context, key string, expire time.Duration) error {
+	return r.cache.Expire(ctx,key,expire)
+}
+
+func (r *feedRepo) ZRevRange(ctx context.Context, key string, start, stop int64) ([]feed.ZMember, error) {
+	return r.cache.ZRevRange(ctx,key,start,stop)
+}
+
+func (r *feedRepo) Exists(ctx context.Context, key string) (bool, error) {
+	return r.cache.Exists(ctx,key)
 }

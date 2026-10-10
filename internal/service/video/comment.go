@@ -31,16 +31,18 @@ type VideoChecker interface {
 }
 
 type CommentService struct {
-	Repo      CommentRepo
-	MQ        CommentMQ
-	VideoRepo VideoChecker
+	Repo         CommentRepo
+	MQ           CommentMQ
+	VideoRepo    VideoChecker
+	PopularityMQ PopularityMQ
 }
 
-func NewCommentService(repo CommentRepo, mq CommentMQ, checker VideoChecker) *CommentService {
+func NewCommentService(repo CommentRepo, mq CommentMQ, checker VideoChecker, popul PopularityMQ) *CommentService {
 	return &CommentService{
-		Repo:      repo,
-		MQ:        mq,
-		VideoRepo: checker,
+		Repo:         repo,
+		MQ:           mq,
+		VideoRepo:    checker,
+		PopularityMQ: popul,
 	}
 }
 
@@ -77,6 +79,7 @@ func (s *CommentService) Publish(ctx context.Context, videoID, accountID uint, u
 	// 优先提交到 MQ
 	if s.MQ != nil {
 		if err := s.MQ.Publish(ctx, comment); err == nil {
+			s.PopularityMQ.UpdatePopularity(ctx, comment.VideoID, 1)
 			return nil
 		}
 	}
@@ -90,6 +93,7 @@ func (s *CommentService) Publish(ctx context.Context, videoID, accountID uint, u
 		return apperrors.NewAppError(http.StatusInternalServerError, "创建失败")
 	}
 
+	s.PopularityMQ.UpdatePopularity(ctx, comment.VideoID, 1)
 	return nil
 }
 

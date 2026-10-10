@@ -20,16 +20,22 @@ type RatingMQ interface {
 	PublishRating(ctx context.Context, action string, accountID, videoID uint) error
 }
 
+type PopularityMQ interface {
+	UpdatePopularity(ctx context.Context, videoID uint, change float64) error
+}
+
 type RatingService struct {
-	RateRepo RateRepo
-	MQ       RatingMQ
+	RateRepo     RateRepo
+	MQ           RatingMQ
+	PopularityMQ PopularityMQ
 }
 
 // NewRatingService 构造评价服务
-func NewRatingService(repo RateRepo, dbRepo VideoDB, mq RatingMQ) *RatingService {
+func NewRatingService(repo RateRepo, dbRepo VideoDB, mq RatingMQ, popul PopularityMQ) *RatingService {
 	return &RatingService{
-		RateRepo: repo,
-		MQ:       mq,
+		RateRepo:     repo,
+		MQ:           mq,
+		PopularityMQ: popul,
 	}
 }
 
@@ -47,6 +53,9 @@ func (s *RatingService) SetUserRating(ctx context.Context, accountID, videoID ui
 	// 正常路径：发送信息到mq
 	if s.MQ != nil {
 		if err := s.MQ.PublishRating(ctx, video.StatusToString(status), accountID, videoID); err == nil {
+			if status == video.StatusLike {
+				s.PopularityMQ.UpdatePopularity(ctx, videoID, 1)
+			}
 			return status, nil // 信息发送成功
 		}
 	}
@@ -58,6 +67,10 @@ func (s *RatingService) SetUserRating(ctx context.Context, accountID, videoID ui
 	}
 
 	stat = status
+	// 如果rating 是 like，则增加热度
+	if status == video.StatusLike {
+		s.PopularityMQ.UpdatePopularity(ctx, videoID, 1)
+	}
 	return stat, err
 }
 

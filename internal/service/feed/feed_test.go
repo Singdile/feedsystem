@@ -33,6 +33,18 @@ func (m *MockFeedRepo) ZRangeWithScores(ctx context.Context, key string, start, 
 func (m *MockFeedRepo) ZAdd(ctx context.Context, key string, member feed.ZMember) error {
 	return m.cache.ZAdd(ctx, key, member)
 }
+func (m *MockFeedRepo) ZUnionStore(ctx context.Context, dest string, keys []string, aggregate string) error {
+	return m.cache.ZUnionStore(ctx, dest, keys, aggregate)
+}
+func (m *MockFeedRepo) Expire(ctx context.Context, key string, expire time.Duration) error {
+	return m.cache.Expire(ctx, key, expire)
+}
+func (m *MockFeedRepo) ZRevRange(ctx context.Context, key string, start, stop int64) ([]feed.ZMember, error) {
+	return m.cache.ZRevRange(ctx, key, start, stop)
+}
+func (m *MockFeedRepo) Exists(ctx context.Context, key string) (bool, error) {
+	return m.cache.Exists(ctx, key)
+}
 
 // 实体缓存 (L2 redis)
 func (m *MockFeedRepo) Key(format string, a ...any) string {

@@ -73,6 +73,7 @@ func main() {
 	ratingPublisher := initRatingMQ(ctx, mq)
 	commentPublisher := initCommentMQ(ctx, mq)
 	socialPublisher := initSocialMQ(ctx, mq)
+	popularityPublisher := initPopularityMQ(ctx, mq)
 	initNotificationMQ(ctx, mq)
 
 	// 创建 SSEHub
@@ -84,15 +85,16 @@ func main() {
 
 	// 装配路由并启动 HTTP 服务
 	app := &http.App{
-		DB:           DB,
-		Cache:        rdb,
-		MC:           mc,
-		MQ:           mq,
-		TimelinePub:  timelinePublisher,
-		RatingMQPub:  ratingPublisher,
-		CommentMQPub: commentPublisher,
-		SocialMQPub:  socialPublisher,
-		Secret:       conf.JwtConfig,
+		DB:            DB,
+		Cache:         rdb,
+		MC:            mc,
+		MQ:            mq,
+		TimelinePub:   timelinePublisher,
+		RatingMQPub:   ratingPublisher,
+		CommentMQPub:  commentPublisher,
+		SocialMQPub:   socialPublisher,
+		PopularityPub: popularityPublisher,
+		Secret:        conf.JwtConfig,
 	}
 	router := http.SetRouter(app)
 	hub.RegisterRoutes(router)
@@ -195,4 +197,22 @@ func initNotificationMQ(ctx context.Context, mq *data.RabbitMQClient) {
 		log.Printf("failed to declare comment topology,err: %v", err)
 		return
 	}
+}
+
+func initPopularityMQ(ctx context.Context, mq *data.RabbitMQClient) *rmq.Publisher {
+	if mq == nil {
+		return nil
+	}
+	topoCtx, cancel := context.WithTimeout(ctx, time.Second*5)
+	defer cancel()
+	if err := mq.DeclarePopularityTopology(topoCtx); err != nil {
+		log.Printf("failed to declare comment topology,err: %v", err)
+		return nil
+	}
+	pub, err := mq.NewPopularityPublisher(topoCtx)
+	if err != nil {
+		log.Printf("failed to create comment publisher,err: %v", err)
+		return nil
+	}
+	return pub
 }

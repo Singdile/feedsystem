@@ -72,3 +72,52 @@ func (h *Handler) ListByTag(c *gin.Context) {
 	}
 	response.OK(c, res)
 }
+
+// GET /feed/popular?asof & offset & limit
+func (h *Handler) ListPopular(c *gin.Context) {
+	// 参数获取与校验
+	asof, err := strconv.ParseInt(c.DefaultQuery("asof","0"), 10, 64)
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, "时间戳错误")
+		return
+	}
+
+	offset, err := strconv.ParseInt(c.DefaultQuery("offset","0"), 10, 64)
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, "offset错误")
+		return
+	}
+	limit, err := strconv.ParseInt(c.DefaultQuery("limit","20"), 10, 64)
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, "limit错误")
+		return
+	}
+
+	if limit <= 0 {
+		limit = 20
+	} else if limit > 100 {
+		limit = 100
+	}
+
+	accountID, ok := currentAccountID(c)
+	if !ok {
+		accountID = 0
+	}
+
+	res, err := h.svc.ListByPopularity(c.Request.Context(), accountID, asof, offset, int(limit))
+	if err != nil {
+		response.FromError(c, err)
+		return
+	}
+	response.OK(c, res)
+}
+
+// currentAccountID 从 JWT 上下文取当前用户
+func currentAccountID(c *gin.Context) (uint, bool) {
+	v, exist := c.Get("user_id")
+	if !exist {
+		return 0, false
+	}
+	id, ok := v.(uint)
+	return id, ok
+}
