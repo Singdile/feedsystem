@@ -7,6 +7,7 @@ import (
 	"feedsystem/internal/http/handler/user"
 	"feedsystem/internal/http/handler/video"
 	"feedsystem/internal/middleware/auth"
+	"feedsystem/internal/middleware/ratelimit"
 	"feedsystem/internal/pkg/jwt"
 	feedrepo "feedsystem/internal/repository/feed"
 	socialrepo "feedsystem/internal/repository/social"
@@ -16,6 +17,7 @@ import (
 	socialsvc "feedsystem/internal/service/social"
 	usersvc "feedsystem/internal/service/user"
 	videosvc "feedsystem/internal/service/video"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -62,7 +64,7 @@ func SetRouter(app *App) *gin.Engine {
 	})
 
 	// 用户api
-	r.POST("/api/v1/users", userHandler.Register) //创建用户
+	r.POST("/api/v1/users",	ratelimit.Limit(app.Cache,"register",10,time.Minute * 30,ratelimit.KeyByIP), userHandler.Register) //创建用户
 
 	userG := r.Group("/api/v1/users", authmiddle.JWTAuthMiddleWare(app.Cache))
 	{
@@ -75,7 +77,7 @@ func SetRouter(app *App) *gin.Engine {
 
 	// 认证
 	authG := r.Group("/api/v1/auth")
-	authG.POST("/login", userHandler.Login)     //用户登录
+	authG.POST("/login", ratelimit.Limit(app.Cache,"login",10,time.Minute,ratelimit.KeyByIP),userHandler.Login)     //用户登录
 	authG.POST("/refresh", userHandler.Refresh) //刷新token
 	authG.POST("/logout", userHandler.Logout)   //注销+服务端踢掉token
 
@@ -104,7 +106,7 @@ func SetRouter(app *App) *gin.Engine {
 	ratingG := r.Group("/api/v1/videos", authmiddle.JWTAuthMiddleWare(app.Cache))
 	{
 		ratingG.GET("/:id/video", videoHandler.GetVideoRating)
-		ratingG.POST("/:id/rating", ratingHandler.SetRating)
+		ratingG.POST("/:id/rating", ratelimit.Limit(app.Cache,"rating",30,time.Minute,ratelimit.KeyByAccount),ratingHandler.SetRating)
 		ratingG.GET("/:id/rating", ratingHandler.GetRating)
 		ratingG.GET("/me/liked-videos", ratingHandler.ListLikedVideos)
 	}
@@ -112,7 +114,7 @@ func SetRouter(app *App) *gin.Engine {
 	// comment
 	commentAuthG := r.Group("/api/v1/videos/:id/comments", authmiddle.JWTAuthMiddleWare(app.Cache))
 	{
-		commentAuthG.POST("", commentHandler.Publish) // 发布（登录）
+		commentAuthG.POST("",ratelimit.Limit(app.Cache,"comment",10,time.Minute * 30,ratelimit.KeyByAccount), commentHandler.Publish) // 发布（登录）
 	}
 
 	r.GET("/api/v1/videos/:id/comments", commentHandler.List)                                                // 列表（公开）
@@ -121,7 +123,7 @@ func SetRouter(app *App) *gin.Engine {
 	// social
 	socialG := r.Group("/api/v1/social", authmiddle.JWTAuthMiddleWare(app.Cache))
 	{
-		socialG.POST("follow", socialHandler.Follow)
+		socialG.POST("follow",ratelimit.Limit(app.Cache,"follow",20,time.Minute,ratelimit.KeyByAccount), socialHandler.Follow)
 		socialG.POST("unfollow", socialHandler.UnFollow)
 		socialG.GET("followers", socialHandler.GetFollowers)
 		socialG.GET("following", socialHandler.GetFollowing)

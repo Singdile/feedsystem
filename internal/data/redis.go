@@ -284,3 +284,15 @@ func (c *RedisClient) Exists(ctx context.Context, key string) (bool, error) {
 
 	return true,nil
 }
+
+// IncrementWithExpire 原子自增 key，首次设置 TTL（限流固定窗口）
+func (c *RedisClient) IncrementWithExpire(ctx context.Context, key string, window time.Duration) (int64, error) {
+	script := redis.NewScript(`
+		local c = redis.call('INCR', KEYS[1])
+		if c == 1 then
+			redis.call('EXPIRE', KEYS[1], ARGV[1])
+		end
+		return c`)
+	n, err := script.Run(ctx, c.rdb, []string{key}, int64(window.Seconds())).Int64()
+	return n, err
+}
