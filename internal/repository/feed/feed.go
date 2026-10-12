@@ -71,17 +71,17 @@ func (r *feedRepo) SetBytes(ctx context.Context, key string, val []byte, ttl tim
 }
 
 func (r *feedRepo) ZUnionStore(ctx context.Context, dest string, keys []string, aggregate string) error {
-	return r.cache.ZUnionStore(ctx,dest,keys,aggregate)
+	return r.cache.ZUnionStore(ctx, dest, keys, aggregate)
 }
 
 func (r *feedRepo) Expire(ctx context.Context, key string, expire time.Duration) error {
-	return r.cache.Expire(ctx,key,expire)
+	return r.cache.Expire(ctx, key, expire)
 }
 
 func (r *feedRepo) ZRevRange(ctx context.Context, key string, start, stop int64) ([]feed.ZMember, error) {
-	return r.cache.ZRevRange(ctx,key,start,stop)
+	return r.cache.ZRevRange(ctx, key, start, stop)
 }
 
 func (r *feedRepo) Exists(ctx context.Context, key string) (bool, error) {
-	return r.cache.Exists(ctx,key)
+	return r.cache.Exists(ctx, key)
 }

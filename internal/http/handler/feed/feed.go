@@ -76,18 +76,18 @@ func (h *Handler) ListByTag(c *gin.Context) {
 // GET /feed/popular?asof & offset & limit
 func (h *Handler) ListPopular(c *gin.Context) {
 	// 参数获取与校验
-	asof, err := strconv.ParseInt(c.DefaultQuery("asof","0"), 10, 64)
+	asof, err := strconv.ParseInt(c.DefaultQuery("asof", "0"), 10, 64)
 	if err != nil {
 		response.Fail(c, http.StatusBadRequest, "时间戳错误")
 		return
 	}
 
-	offset, err := strconv.ParseInt(c.DefaultQuery("offset","0"), 10, 64)
+	offset, err := strconv.ParseInt(c.DefaultQuery("offset", "0"), 10, 64)
 	if err != nil {
 		response.Fail(c, http.StatusBadRequest, "offset错误")
 		return
 	}
-	limit, err := strconv.ParseInt(c.DefaultQuery("limit","20"), 10, 64)
+	limit, err := strconv.ParseInt(c.DefaultQuery("limit", "20"), 10, 64)
 	if err != nil {
 		response.Fail(c, http.StatusBadRequest, "limit错误")
 		return

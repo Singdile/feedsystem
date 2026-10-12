@@ -195,8 +195,6 @@ func (c *RedisClient) ZUnionStore(ctx context.Context, dest string, keys []strin
 	return err
 }
 
-
-
 // MGet 批量读取多个key的元素
 func (c *RedisClient) MGet(ctx context.Context, keys ...string) ([]any, error) {
 	return c.rdb.MGet(ctx, keys...).Result()
@@ -249,6 +247,7 @@ func randHex(n int) string {
 func IsMiss(err error) bool {
 	return errors.Is(err, redis.Nil)
 }
+
 // ZRevRange 按排名区间 [start, stop] 返回 member（score 降序）
 func (c *RedisClient) ZRevRange(ctx context.Context, key string, start, stop int64) ([]feed.ZMember, error) {
 	res, err := c.rdb.ZRangeArgsWithScores(ctx, redis.ZRangeArgs{
@@ -273,16 +272,16 @@ func (c *RedisClient) ZRevRange(ctx context.Context, key string, start, stop int
 		})
 	}
 
-	return out,nil
+	return out, nil
 }
 
 func (c *RedisClient) Exists(ctx context.Context, key string) (bool, error) {
-	_,err := c.rdb.Exists(ctx,key).Result()
+	_, err := c.rdb.Exists(ctx, key).Result()
 	if err != nil {
-		return false,err
+		return false, err
 	}
 
-	return true,nil
+	return true, nil
 }
 
 // IncrementWithExpire 原子自增 key，首次设置 TTL（限流固定窗口）
