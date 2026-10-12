@@ -6,11 +6,11 @@ import "time"
 type Comment struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`
 	EventID   string    `gorm:"uniqueIndex;size:191" json:"event_id"` // 事件id，用于实现幂等性
-	VideoID   uint      `gorm:"index" json:"video_id"`       //视频id
-	AuthorID  uint      `gorm:"index" json:"author_id"`      //视频创作者id
-	AccountID uint      `gorm:"index" json:"account_id"`     //评价者的id
-	UserName  string    `json:"user_name"`                   //评价者的名称
-	Content   string    `gorm:"type:text" json:"content"`    //评论内容
+	VideoID   uint      `gorm:"index" json:"video_id"`                //视频id
+	AuthorID  uint      `gorm:"index" json:"author_id"`               //视频创作者id
+	AccountID uint      `gorm:"index" json:"account_id"`              //评价者的id
+	UserName  string    `json:"user_name"`                            //评价者的名称
+	Content   string    `gorm:"type:text" json:"content"`             //评论内容
 	CreatedAt time.Time `json:"created_at"`
 }
 
