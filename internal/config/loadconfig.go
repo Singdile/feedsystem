@@ -4,6 +4,7 @@ package config
 import (
 	"fmt"
 	"log"
+	"os"
 
 	"github.com/spf13/viper"
 )
@@ -67,8 +68,19 @@ var Conf *Config
 
 // Init 默认读取默认配置文件，可以通过启动传递参数指定配置文件
 func Init() error {
+	env := os.Getenv("FEED_ENV")
+
+	if env == "" {
+		env = "dev"
+	}
+
+	name := "config"
+	if env == "prod" {
+		name = "config.prod"
+	}
+
 	// viper 基础配置
-	viper.SetConfigName("config")    // 配置文件名，不带后缀. 不是模糊查找
+	viper.SetConfigName(name)        // 配置文件名，不带后缀. 不是模糊查找
 	viper.SetConfigType("yaml")      // 文件类型 yaml, 即 config.yaml
 	viper.AddConfigPath("./configs") // 查找 configs 文件夹
 
