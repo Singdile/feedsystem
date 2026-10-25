@@ -124,7 +124,10 @@ func (h *SSEHub) SSEHandler(c *gin.Context) {
 		select {
 		case <-c.Request.Context().Done():
 			return
-		case n := <-ch:
+		case n,ok := <-ch: // 当channel 被关闭之后取值会有两种情况：1.缓冲区还有值，返回 value,true  2.缓冲区没有值，返回 zero-value,false
+			if !ok { //之后可能是channel被关闭之后且缓冲区没有值的情况
+				return
+			}
 			b, _ := json.Marshal(n)
 			fmt.Fprintf(c.Writer, "data: %s\n\n", b)
 			c.Writer.Flush()
