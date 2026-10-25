@@ -120,22 +120,46 @@ func (h *SSEHub) SSEHandler(c *gin.Context) {
 	defer h.UnSubscribe(userID, ch)
 
 	// 循环推送信息给浏览器
+	// select 不是顺序选择，而是先平行评估每个分支是否就绪；若都没就绪，就阻塞；若多个同时就绪，随机选择执行一个分支；
+	failcount := 0 //发送失败计数
+	ticker := time.NewTicker(30 * time.Second) //设置计时器
+	defer ticker.Stop() //结束后停止计时器
 	for {
 		select {
-		case <-c.Request.Context().Done():
+		case <-c.Request.Context().Done(): // 客户端断开
 			return
 		case n,ok := <-ch: // 当channel 被关闭之后取值会有两种情况：1.缓冲区还有值，返回 value,true  2.缓冲区没有值，返回 zero-value,false
 			if !ok { //之后可能是channel被关闭之后且缓冲区没有值的情况
 				return
 			}
 			b, _ := json.Marshal(n)
-			fmt.Fprintf(c.Writer, "data: %s\n\n", b)
-			c.Writer.Flush()
-		case <-time.After(30 * time.Second):
-			fmt.Fprintf(c.Writer, ": keepalive\n\n")
-			c.Writer.Flush()
+			if err := writeSSE(c,"data: %s\n\n",b); err != nil {
+				failcount++
+				if failcount >= 3 {
+					return
+				}
+			} else {
+				failcount = 0
+			}
+		case <-ticker.C:
+			if err := writeSSE(c,": keepalive\n\n"); err != nil {
+				failcount++
+				if failcount >= 3 {
+					return
+				}
+			} else {
+				failcount = 0
+			}
 		}
 	}
+}
+// 写入 SSE 帧并 flush。
+// Flush() 无返回值；其失败会被 net/http 记忆到 bufio，
+// 在下一次 Fprintf 时暴露，所以只需检查 Fprintf 的错误。
+func writeSSE(c *gin.Context, format string, args ...any) error {
+    _, err := fmt.Fprintf(c.Writer, format, args...)
+    c.Writer.Flush()
+    return err
 }
 
 // GET /notifications/list?cursor=xx&limit=20
