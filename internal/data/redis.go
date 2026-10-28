@@ -276,12 +276,12 @@ func (c *RedisClient) ZRevRange(ctx context.Context, key string, start, stop int
 }
 
 func (c *RedisClient) Exists(ctx context.Context, key string) (bool, error) {
-	_, err := c.rdb.Exists(ctx, key).Result()
+	n, err := c.rdb.Exists(ctx, key).Result()
 	if err != nil {
 		return false, err
 	}
 
-	return true, nil
+	return n > 0, nil
 }
 
 // IncrementWithExpire 原子自增 key，首次设置 TTL（限流固定窗口）
@@ -294,4 +294,20 @@ func (c *RedisClient) IncrementWithExpire(ctx context.Context, key string, windo
 		return c`)
 	n, err := script.Run(ctx, c.rdb, []string{key}, int64(window.Seconds())).Int64()
 	return n, err
+}
+
+// SAdd 向集合添加成员
+func (c *RedisClient) SAdd(ctx context.Context, key string, members ...any) error {
+	return c.rdb.SAdd(ctx, key, members...).Err()
+}
+
+// SRem 从集合中移除成员
+func (c *RedisClient) SRem(ctx context.Context, key string, members ...any) error {
+	return c.rdb.SRem(ctx, key, members...).Err()
+}
+
+// SMIsMember 判断成员是否在集合中
+func (c *RedisClient) SMIsMember(ctx context.Context, key string, members ...any) ([]bool, error) {
+	res, err := c.rdb.SMIsMember(ctx, key, members...).Result()
+	return res, err
 }

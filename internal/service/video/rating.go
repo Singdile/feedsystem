@@ -4,6 +4,7 @@ import (
 	"context"
 	"feedsystem/internal/model/video"
 	apperrors "feedsystem/internal/pkg/errors"
+	"log"
 	"net/http"
 )
 
@@ -13,6 +14,12 @@ type RateRepo interface {
 	GetRating(ctx context.Context, videoID, accountID uint) (int8, error)
 	GetRatings(ctx context.Context, videoID []uint, accountID uint) (map[uint]int8, error)
 	ListLikedVideos(ctx context.Context, accountID uint, cursorStr *video.Cursor, limit int) ([]video.Video, error)
+}
+
+// RatingCache 用户评价缓存(redis set)
+type RatingCache interface {
+	UpdateRatingCache(ctx context.Context, accountID, videID uint, status int8) error
+	GetRatingCache(ctx context.Context, accountID uint, videoIDs ...uint) ([]int8, error)
 }
 
 // RatingMQ 发送 Rating 事件到MQ
@@ -28,14 +35,16 @@ type RatingService struct {
 	RateRepo     RateRepo
 	MQ           RatingMQ
 	PopularityMQ PopularityMQ
+	RatingCache  RatingCache
 }
 
 // NewRatingService 构造评价服务
-func NewRatingService(repo RateRepo, dbRepo VideoDB, mq RatingMQ, popul PopularityMQ) *RatingService {
+func NewRatingService(repo RateRepo, dbRepo VideoDB, mq RatingMQ, popul PopularityMQ, ratingcache RatingCache) *RatingService {
 	return &RatingService{
 		RateRepo:     repo,
 		MQ:           mq,
 		PopularityMQ: popul,
+		RatingCache:  ratingcache,
 	}
 }
 
@@ -48,6 +57,13 @@ func (s *RatingService) SetUserRating(ctx context.Context, accountID, videoID ui
 
 	if status != -1 && status != 0 && status != 1 {
 		return 0, apperrors.NewAppError(http.StatusBadRequest, "参数错误")
+	}
+
+	// 更新cache缓存中的用户评价
+	if s.RatingCache != nil {
+		if err := s.RatingCache.UpdateRatingCache(ctx, accountID, videoID, status); err != nil {
+			log.Printf("update rating cache failed: %v \n", err)
+		}
 	}
 
 	// 正常路径：发送信息到mq
@@ -80,6 +96,15 @@ func (s *RatingService) GetUserRating(ctx context.Context, accountID uint, video
 		return 0, apperrors.NewAppError(http.StatusBadRequest, "参数错误")
 	}
 
+	// 查看缓存中的用户评价
+	if s.RatingCache != nil {
+		stats, err := s.RatingCache.GetRatingCache(ctx, accountID, videoID)
+		if err == nil {
+			return stats[0], nil
+		}
+	}
+
+	// 当缓存失效的时候，直接查询DB
 	stat, err = s.RateRepo.GetRating(ctx, videoID, accountID)
 	if err != nil {
 		return 0, err
@@ -94,6 +119,17 @@ func (s *RatingService) GetUserRatings(ctx context.Context, accountID uint, vide
 		return nil, apperrors.NewAppError(http.StatusBadRequest, "参数错误")
 	}
 
+	// 查看缓存中的用户评价
+	if s.RatingCache != nil {
+		stats, err := s.RatingCache.GetRatingCache(ctx, accountID, videoID...)
+		if err == nil {
+			statMap := make(map[uint]int8, len(videoID))
+			for i, v := range videoID {
+				statMap[v] = stats[i]
+			}
+			return statMap, nil
+		}
+	}
 	return s.RateRepo.GetRatings(ctx, videoID, accountID)
 }
 

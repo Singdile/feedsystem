@@ -50,8 +50,10 @@ type VideoProvider interface {
 }
 
 type RatingProvider interface {
-	GetRating(ctx context.Context, videoID, accountID uint) (int8, error)
+	//DB
 	GetRatings(ctx context.Context, videoID []uint, accountID uint) (map[uint]int8, error)
+	//cache
+	GetRatingCache(ctx context.Context, accountID uint, videoIDs ...uint) ([]int8, error)
 }
 
 type FeedService struct {
@@ -466,6 +468,15 @@ func (s *FeedService) stampStatus(ctx context.Context, accountID uint, views []v
 		ids = append(ids, v.ID)
 	}
 
+	// 先查cache
+	stats,err := s.ratingSvc.GetRatingCache(ctx,accountID,ids...)
+	if err == nil {
+		for i := range views {
+			views[i].Status = stats[i]
+		}
+		return views,nil
+	}
+	// cache失效，降级DB
 	statusMap, err := s.ratingSvc.GetRatings(ctx, ids, accountID)
 	if err != nil {
 		return nil, err

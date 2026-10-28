@@ -11,6 +11,8 @@ import (
 	"gorm.io/gorm"
 )
 
+const ratingCacheTTL = 7 * 24 * time.Hour
+
 type ratingRepo struct {
 	db    *gorm.DB
 	cache *data.RedisClient
@@ -193,4 +195,134 @@ func (r *ratingRepo) ListLikedVideos(ctx context.Context, accountID uint, cursor
 	var items []video.Video
 	err := q.Order("videos.created_at DESC,videos.id DESC").Limit(limit).Find(&items).Error
 	return items, err
+}
+
+// 预热：从DB中全量注入到cache中并添加TTL
+func (r *ratingRepo) WarmupRatingCache(ctx context.Context, accountID uint) error {
+	if r.cache == nil {
+		return nil
+	}
+
+	var rows []video.VideoRating
+
+	// 查询用户所有的评价
+	err := r.db.WithContext(ctx).Select("video_id,status").Where("account_id = ?", accountID).Find(&rows).Error
+	if err != nil {
+		return err
+	}
+
+	// 存入缓存
+	likedKey := r.cache.Key("account:%d:liked", accountID)
+	dislikedKey := r.cache.Key("account:%d:disliked", accountID)
+	liked, disliked := []any{}, []any{}
+	for _, row := range rows {
+		if row.Status == 1 {
+			liked = append(liked, row.VideoID)
+		}
+		if row.Status == -1 {
+			disliked = append(disliked, row.VideoID)
+		}
+	}
+
+	if len(liked) == 0 {
+		liked = append(liked,0)
+	}
+
+	if len(disliked) == 0 {
+		disliked = append(disliked,0)
+	}
+
+	r.cache.SAdd(ctx, likedKey, liked...)
+	r.cache.SAdd(ctx, dislikedKey, disliked...)
+	r.cache.Expire(ctx, likedKey, ratingCacheTTL)
+	r.cache.Expire(ctx, dislikedKey, ratingCacheTTL)
+	return nil
+}
+
+// 增量同步
+func (r *ratingRepo) UpdateRatingCache(ctx context.Context, accountID, videoID uint, status int8) error {
+	if r.cache == nil {
+		return nil
+	}
+
+	likedKey := r.cache.Key("account:%d:liked", accountID)
+	dislikedKey := r.cache.Key("account:%d:disliked", accountID)
+
+	vid := videoID
+
+	switch status {
+	case 1:
+		r.cache.SAdd(ctx, likedKey, vid)
+		r.cache.SRem(ctx, dislikedKey, vid)
+	case -1:
+		r.cache.SAdd(ctx, dislikedKey, vid)
+		r.cache.SRem(ctx, likedKey, vid)
+	default:
+		r.cache.SRem(ctx, dislikedKey, vid)
+		r.cache.SRem(ctx, likedKey, vid)
+	}
+	return nil
+}
+
+// 懒加载重建用户评价信息
+func (r *ratingRepo) ensureRatingCache(ctx context.Context, accountID uint) error {
+	likedKey := r.cache.Key("account:%d:liked", accountID)
+	dislikedKey := r.cache.Key("account:%d:disliked", accountID)
+
+	existsLiked, err := r.cache.Exists(ctx, likedKey)
+	if err != nil {
+		return err
+	}
+
+	existsDisliked, err := r.cache.Exists(ctx, dislikedKey)
+	if err != nil {
+		return err
+	}
+
+	if !existsLiked || !existsDisliked {
+		if err := r.WarmupRatingCache(ctx, accountID); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (r *ratingRepo) GetRatingCache(ctx context.Context, accountID uint, videoIDs ...uint) ([]int8, error) {
+	if len(videoIDs) == 0 {
+		return nil, errors.New("videoID empty")
+	}
+	// 先确保cache可用
+	err := r.ensureRatingCache(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
+
+	// 获取数据
+	likedKey := r.cache.Key("account:%d:liked", accountID)
+	dislikedKey := r.cache.Key("account:%d:disliked", accountID)
+
+	members := make([]any,len(videoIDs))
+	for i,id := range videoIDs {
+		members[i] = id
+	}
+	liked,err := r.cache.SMIsMember(ctx,likedKey,members...)
+	if err != nil {
+		return nil,err
+	}
+	disliked,err := r.cache.SMIsMember(ctx,dislikedKey,members...)
+	if err != nil {
+		return nil,err
+	}
+
+	// 返回
+	result := make([]int8, len(videoIDs))
+	for i := range videoIDs {
+		switch {
+		case liked[i]: result[i] = 1
+		case disliked[i]: result[i] = -1
+		default: result[i] = 0
+		}
+	}
+	return result, nil
 }

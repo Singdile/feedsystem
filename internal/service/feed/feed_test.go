@@ -3,6 +3,7 @@ package feed
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"feedsystem/internal/config"
 	"feedsystem/internal/data"
 	"feedsystem/internal/model/feed"
@@ -97,6 +98,11 @@ func (m *MockRatingProvider) GetRating(ctx context.Context, videoID, accountID u
 func (m *MockRatingProvider) GetRatings(ctx context.Context, videoID []uint, accountID uint) (map[uint]int8, error) {
 	args := m.Called(ctx, videoID, accountID)
 	ans, _ := args.Get(0).(map[uint]int8)
+	return ans, args.Error(1)
+}
+func (m *MockRatingProvider) GetRatingCache(ctx context.Context, accountID uint, videoIDs ...uint) ([]int8, error) {
+	args := m.Called(ctx, accountID, videoIDs)
+	ans, _ := args.Get(0).([]int8)
 	return ans, args.Error(1)
 }
 
@@ -566,12 +572,13 @@ func TestListFeed_AnonymousLikedStatus(t *testing.T) {
 	require.Equal(t, int8(0), ans[0].Status)
 	require.Equal(t, int8(0), ans[1].Status)
 	require.Equal(t, int8(0), ans[2].Status)
-	// 匿名不调 GetRatings
+	// 匿名不调 GetRatingCache / GetRatings
+	ratingProvider.AssertNotCalled(t, "GetRatingCache", mock.Anything, mock.Anything, mock.Anything)
 	ratingProvider.AssertNotCalled(t, "GetRatings", mock.Anything, mock.Anything, mock.Anything)
 }
 
 // TestListFeed_LoggedInLikedStatus 测试登录用户，返回的视频status是否正确
-// status 走DB查询
+// status 走缓存查询（GetRatingCache）
 func TestListFeed_LoggedInLikedStatus(t *testing.T) {
 	cache, _ := newTestCache(t)
 	repo := &MockFeedRepo{cache: cache}
@@ -606,16 +613,44 @@ func TestListFeed_LoggedInLikedStatus(t *testing.T) {
 		},
 	}
 
+	// status 走缓存查询，mock GetRatingCache 返回与 views 顺序一致的 []int8
+	ratingProvider.On("GetRatingCache", mock.Anything, mock.Anything, mock.Anything).Return([]int8{1, -1, 0}, nil).Once()
+	ans, err := svc.stampStatus(ctx, accountID, views)
+	t.Logf("%#v", ans)
+
+	require.NoError(t, err)
+	require.Equal(t, 3, len(ans))
+	require.Equal(t, int8(1), ans[0].Status)
+	require.Equal(t, int8(-1), ans[1].Status)
+	require.Equal(t, int8(0), ans[2].Status)
+}
+
+// TestListFeed_LikedStatusCacheFallback 测试缓存失败时降级 DB 查询
+func TestListFeed_LikedStatusCacheFallback(t *testing.T) {
+	cache, _ := newTestCache(t)
+	repo := &MockFeedRepo{cache: cache}
+	videoProvider := &MockVideoProvider{}
+	ratingProvider := &MockRatingProvider{}
+	svc := NewFeedService(repo, videoProvider, ratingProvider)
+	ctx := context.Background()
+
+	accountID := uint(1)
+	views := []video.VideoView{
+		{ID: 1, Title: "V1"},
+		{ID: 2, Title: "V2"},
+		{ID: 3, Title: "V3"},
+	}
+
 	vs := map[uint]int8{
 		1: 1,
 		2: -1,
 		3: 0,
 	}
 
-	// status 是直接查询数据库的，所以这里直接模拟根据查询到的videos，查询对应的status
+	// 缓存失败（Redis 故障）→ 降级 GetRatings DB 查询
+	ratingProvider.On("GetRatingCache", mock.Anything, mock.Anything, mock.Anything).Return(nil, errors.New("redis down")).Once()
 	ratingProvider.On("GetRatings", mock.Anything, mock.Anything, mock.Anything).Return(vs, nil).Once()
 	ans, err := svc.stampStatus(ctx, accountID, views)
-	t.Logf("%#v", ans)
 
 	require.NoError(t, err)
 	require.Equal(t, 3, len(ans))

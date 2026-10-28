@@ -54,17 +54,23 @@ type VideoRepo interface {
 	Counts(ctx context.Context, id uint) (int64, error)
 }
 
+// 预热评价数据
+type RatingWarmer interface {
+	WarmupRatingCache(ctx context.Context, accountID uint) error
+}
+
 // UserService 账号业务服务
 type UserService struct {
 	repo          UserRepo
 	cache         CacheRepo
 	social        SocialRepo
 	videoProvider VideoRepo
+	warmer        RatingWarmer
 }
 
 // NewUserService 构造账号服务
-func NewUserService(repo UserRepo, cache CacheRepo, social SocialRepo, videoProvider VideoRepo) *UserService {
-	return &UserService{repo: repo, cache: cache, social: social, videoProvider: videoProvider}
+func NewUserService(repo UserRepo, cache CacheRepo, social SocialRepo, videoProvider VideoRepo, warmer RatingWarmer) *UserService {
+	return &UserService{repo: repo, cache: cache, social: social, videoProvider: videoProvider, warmer: warmer}
 }
 
 // Register 注册：校验用户名、哈希密码后写入
@@ -138,7 +144,7 @@ func (s *UserService) Login(ctx context.Context, username, rawPassword string) (
 		s.cache.Del(ctx, s.cache.Key("refresh:%s", old))
 	}
 
-	// 记录在redisn
+	// 记录在redis
 	accessCacheKey := fmt.Sprintf("account:%d", user.ID)
 	refreshCacheKey := fmt.Sprintf("account:%d:refresh", user.ID)
 
@@ -154,6 +160,13 @@ func (s *UserService) Login(ctx context.Context, username, rawPassword string) (
 			log.Printf("refresh token落库失败，userid:%v,err:%v", user.ID, err)
 		}
 	}()
+
+	// 登录预热评价信息
+	if s.warmer != nil {
+		if err := s.warmer.WarmupRatingCache(ctx, user.ID); err != nil {
+			log.Printf("warmup rating cache failed,userid: %v,err: %v", user.ID, err)
+		}
+	}
 	// 返回token
 	return accessToken, refreshToken, nil
 }
