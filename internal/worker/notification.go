@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"feedsystem/internal/data"
 	"feedsystem/internal/model/account"
 	"feedsystem/internal/model/video"
 	"log"
@@ -13,12 +14,14 @@ import (
 	"gorm.io/gorm"
 )
 
+const notifUnreadTTL = 7 * 24 * time.Hour
+
 // NotificationHub 推送通知给在线用户（SSEHub 后续实现本接口）
 type NotificationHub interface {
 	Push(userID uint, n *account.Notification)
 }
 
-func NotificationHandler(db *gorm.DB, hub NotificationHub) MQHandler {
+func NotificationHandler(db *gorm.DB, hub NotificationHub, cache *data.RedisClient) MQHandler {
 	return func(ctx context.Context, dc rmq.IDeliveryContext) error {
 		// 解析事件数据
 		var header struct {
@@ -37,11 +40,11 @@ func NotificationHandler(db *gorm.DB, hub NotificationHub) MQHandler {
 		process := func(action string, data []byte) error {
 			switch action {
 			case "like":
-				return processLike(ctx, db, hub, data) // todo: 处理like
+				return processLike(ctx, db, cache, hub, data) // todo: 处理like
 			case "publish":
-				return processPublish(ctx, db, hub, data)
+				return processPublish(ctx, db, cache, hub, data)
 			case "follow":
-				return processFollow(ctx, db, hub, data)
+				return processFollow(ctx, db, cache, hub, data)
 			default:
 				return nil
 			}
@@ -61,7 +64,29 @@ func NotificationHandler(db *gorm.DB, hub NotificationHub) MQHandler {
 	}
 }
 
-func processLike(ctx context.Context, db *gorm.DB, hub NotificationHub, data []byte) error {
+// 通知落库成功后调用(key 不存在的时候懒加载)
+func incrUnread(ctx context.Context, db *gorm.DB, cache *data.RedisClient, recipientID uint) {
+	if cache == nil {
+		return
+	}
+
+	key := cache.Key("notification:%d", recipientID)
+	exists, err := cache.Exists(ctx, key)
+	if err != nil {
+		return
+	}
+	if !exists {
+		// 懒加载
+		var cnt int64
+		db.WithContext(ctx).Model(&account.Notification{}).Where("recipient_id = ? and is_read = ?", recipientID, false).Count(&cnt)
+		cache.Set(ctx, key, cnt, notifUnreadTTL)
+		return
+	}
+	cache.Incr(ctx, key)
+	cache.Expire(ctx, key, notifUnreadTTL)
+}
+
+func processLike(ctx context.Context, db *gorm.DB, cache *data.RedisClient, hub NotificationHub, data []byte) error {
 	// 参数解析
 	var likeEvent video.RatingEvent
 	if err := json.Unmarshal(data, &likeEvent); err != nil { // 解析不了，说明data有问题，直接确认处理即可
@@ -98,11 +123,12 @@ func processLike(ctx context.Context, db *gorm.DB, hub NotificationHub, data []b
 	}
 
 	// 推送信息给在线用户
+	incrUnread(ctx, db, cache, notifiacitonEvent.RecipientID)
 	hub.Push(notifiacitonEvent.RecipientID, &notifiacitonEvent)
 	return nil
 }
 
-func processPublish(ctx context.Context, db *gorm.DB, hub NotificationHub, data []byte) error {
+func processPublish(ctx context.Context, db *gorm.DB, cache *data.RedisClient, hub NotificationHub, data []byte) error {
 	// 参数解析
 	var commentEvent video.CommentEvent
 	if err := json.Unmarshal(data, &commentEvent); err != nil { // 解析不了，说明data有问题，直接确认处理即可
@@ -131,6 +157,7 @@ func processPublish(ctx context.Context, db *gorm.DB, hub NotificationHub, data 
 	}
 
 	// 推送信息给视频作者
+	incrUnread(ctx, db, cache, notifiacitonEvent.RecipientID)
 	hub.Push(notifiacitonEvent.RecipientID, &notifiacitonEvent)
 
 	// 推送信息给提及者
@@ -159,6 +186,7 @@ func processPublish(ctx context.Context, db *gorm.DB, hub NotificationHub, data 
 			log.Printf("notificaton create fail,err: %v", err)
 			return err
 		}
+		incrUnread(ctx, db, cache, mention.RecipientID)
 		hub.Push(v.ID, &mention)
 	}
 	return nil
@@ -179,7 +207,7 @@ func extractMention(content string) []string {
 	return names
 }
 
-func processFollow(ctx context.Context, db *gorm.DB, hub NotificationHub, data []byte) error {
+func processFollow(ctx context.Context, db *gorm.DB, cache *data.RedisClient, hub NotificationHub, data []byte) error {
 	// 参数解析
 	var socialEvent account.SocialEvent
 	if err := json.Unmarshal(data, &socialEvent); err != nil { // 解析不了，说明data有问题，直接确认处理即可
@@ -204,6 +232,7 @@ func processFollow(ctx context.Context, db *gorm.DB, hub NotificationHub, data [
 	}
 
 	// 推送信息给在线用户
+	incrUnread(ctx, db, cache, notifiacitonEvent.RecipientID)
 	hub.Push(notifiacitonEvent.RecipientID, &notifiacitonEvent)
 	return nil
 

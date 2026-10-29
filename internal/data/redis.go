@@ -311,3 +311,22 @@ func (c *RedisClient) SMIsMember(ctx context.Context, key string, members ...any
 	res, err := c.rdb.SMIsMember(ctx, key, members...).Result()
 	return res, err
 }
+
+// Incr 计数器加一
+func (c *RedisClient) Incr(ctx context.Context, key string) (int64, error) {
+	return c.rdb.Incr(ctx, key).Result()
+}
+
+// DecrNotNegative 计数器减一，但是不会减到负数
+func (c *RedisClient) DecrNotNegative(ctx context.Context, key string) (int64, error) {
+	script := redis.NewScript(`
+local n = redis.call('DECR',KEYS[1])
+if n < 0 then
+redis.call('SET',KEYS[1],0)
+return 0
+end
+
+return n
+`)
+	return script.Run(ctx, c.rdb, []string{key}).Int64()
+}

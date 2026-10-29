@@ -2,11 +2,13 @@ package worker
 
 import (
 	"encoding/json"
+	"feedsystem/internal/data"
 	"feedsystem/internal/http/response"
 	"feedsystem/internal/model/account"
 	"feedsystem/internal/model/video"
 	"feedsystem/internal/pkg/jwt"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"sync"
@@ -20,13 +22,15 @@ type SSEHub struct {
 	mu      sync.RWMutex                        // 保护clients 并发访问
 	clients map[uint]chan *account.Notification // 用户id->channel
 	db      *gorm.DB
-	key     []byte //jwt 签名密钥
+	cache   *data.RedisClient //用于用户未读信息计数
+	key     []byte            //jwt 签名密钥
 }
 
-func NewSSEHub(db *gorm.DB, key []byte) *SSEHub {
+func NewSSEHub(db *gorm.DB, cache *data.RedisClient, key []byte) *SSEHub {
 	return &SSEHub{
 		clients: make(map[uint]chan *account.Notification),
 		db:      db,
+		cache:   cache,
 		key:     key,
 	}
 }
@@ -251,14 +255,19 @@ func (h *SSEHub) MarkReadHandler(c *gin.Context) {
 
 	// 开始标记
 	q := h.db.WithContext(c.Request.Context()).Model(&account.Notification{})
+	key := h.cache.Key("notification:%d", userID)
 	if req.ID == 0 { //将所有的未读信息，标记为已读
 		q = q.Where("recipient_id = ?", userID)
+		if err := q.Update("is_read", true); err != nil {
+			log.Printf("更新用户消息状态失败,err: %v", err)
+		}
+		h.cache.Del(c.Request.Context(), key)
 	} else {
 		q = q.Where("id = ? AND recipient_id = ?", req.ID, userID)
-	}
-	if err := q.Update("is_read", true).Error; err != nil {
-		response.Fail(c, http.StatusInternalServerError, "标记失败")
-		return
+		res := q.Update("is_read", true)
+		if res.RowsAffected > 0 {
+			h.cache.DecrNotNegative(c.Request.Context(), key)
+		}
 	}
 
 	response.OK(c)
@@ -273,6 +282,17 @@ func (h *SSEHub) UnreadCountHandler(c *gin.Context) {
 		return
 	}
 
+	// 先查cache
+	ctx := c.Request.Context()
+	key := h.cache.Key("notification:%d", userID)
+	v, err := h.cache.Get(ctx, key)
+	if err == nil {
+		n, _ := strconv.Atoi(v)
+		response.OK(c, gin.H{"count": n})
+		return
+	}
+
+	// cache失效，降级查DB
 	var count int64
 	if err := h.db.WithContext(c.Request.Context()).
 		Model(&account.Notification{}).
@@ -281,7 +301,7 @@ func (h *SSEHub) UnreadCountHandler(c *gin.Context) {
 		response.Fail(c, http.StatusInternalServerError, "查询失败")
 		return
 	}
-
+	h.cache.Set(ctx, key, count, notifUnreadTTL)
 	response.OK(c, gin.H{"count": count})
 }
 

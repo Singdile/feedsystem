@@ -77,10 +77,10 @@ func main() {
 	initNotificationMQ(ctx, mq)
 
 	// 创建 SSEHub
-	hub := worker.NewSSEHub(DB, jwt.SetSecret(conf.JwtConfig.Secret))
+	hub := worker.NewSSEHub(DB, rdb, jwt.SetSecret(conf.JwtConfig.Secret))
 	// 启动 NotificationWorker 消费 notification.events 队列
 	if mq != nil {
-		worker.RunConsumer(ctx, mq, data.NotificationQueue, worker.NotificationHandler(DB, hub))
+		worker.RunConsumer(ctx, mq, data.NotificationQueue, worker.NotificationHandler(DB, hub, rdb))
 	}
 
 	// 装配路由并启动 HTTP 服务
