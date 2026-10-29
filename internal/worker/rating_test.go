@@ -79,10 +79,10 @@ func TestRatingHandler(t *testing.T) {
 		{"合法like", likeBody, func(m *MockRatingSetter) { m.On("SetRating", mock.Anything, uint(1), uint(1), int8(1)).Return(nil) }, false, true, false, true},
 		{"JSON非法", []byte("not-json"), func(m *MockRatingSetter) {}, false, true, false, false},
 		{"action非法", []byte(`{"action":"praise","account_id":1,"video_id":3}`), func(m *MockRatingSetter) {}, false, true, false, false},
-		{"SetRating失败 → Requeue", likeBody, func(m *MockRatingSetter) {
+		{"SetRating失败 → 重试3次后Accept丢弃", likeBody, func(m *MockRatingSetter) {
 			m.On("SetRating", mock.Anything, uint(1), uint(1), int8(1)).Return(errors.New("db down"))
 		},
-			true, false, true, true},
+			false, true, false, true},
 	}
 
 	for _, tt := range tests {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"feedsystem/internal/model/video"
+	"log"
 
 	rmq "github.com/rabbitmq/rabbitmq-amqp-go-client/pkg/rabbitmqamqp"
 )
@@ -33,12 +34,16 @@ func CommentHandler(repo CommentWriter) MQHandler {
 		}
 
 		if event.Action == "delete" {
-			err := repo.Delete(ctx, event.CommentID)
-			if err != nil {
-				_ = dc.Requeue(ctx)
-				return err
-			}
-			return dc.Accept(ctx)
+		err := retryWithBackOff(3, func() error {
+			return repo.Delete(ctx, event.CommentID)
+		})
+
+		if err != nil {
+			log.Printf("comment delete 处理失败重试之后丢弃: %v", err)
+			_ = dc.Accept(ctx)
+			return nil
+		}
+		return dc.Accept(ctx)
 		}
 
 		// 组装
@@ -52,11 +57,16 @@ func CommentHandler(repo CommentWriter) MQHandler {
 			CreatedAt: event.OccurredAt,
 		}
 
-		if err := repo.Create(ctx, &comment); err != nil {
-			_ = dc.Requeue(ctx)
-			return err
-		}
 
+		err := retryWithBackOff(3, func() error {
+			return repo.Create(ctx, &comment)
+		})
+
+		if err != nil {
+			log.Printf("comment 处理失败重试之后丢弃: %v", err)
+			_ = dc.Accept(ctx)
+			return nil
+		}
 		return dc.Accept(ctx)
 	}
 }

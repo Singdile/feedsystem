@@ -101,9 +101,9 @@ func TestCommentHandle(t *testing.T) {
 			setup: func(writer *MockCommentWriter) {
 				writer.On("Create", mock.Anything, mock.Anything).Return(errors.New("publish failed"))
 			},
-			wantErr:      true,
-			wantAccepted: false,
-			wantRequeued: true,
+			wantErr:      false,
+			wantAccepted: true,
+			wantRequeued: false,
 		},
 		{
 			Name: "fail delete",
@@ -111,9 +111,9 @@ func TestCommentHandle(t *testing.T) {
 			setup: func(writer *MockCommentWriter) {
 				writer.On("Delete", mock.Anything, uint(2)).Return(errors.New("delete failed"))
 			},
-			wantErr:      true,
-			wantAccepted: false,
-			wantRequeued: true,
+			wantErr:      false,
+			wantAccepted: true,
+			wantRequeued: false,
 		},
 		{
 			Name: "fail delete cuz wrong data",

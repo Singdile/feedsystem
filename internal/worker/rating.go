@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"feedsystem/internal/model/video"
+	"log"
 
 	rmq "github.com/rabbitmq/rabbitmq-amqp-go-client/pkg/rabbitmqamqp"
 )
@@ -29,11 +30,15 @@ func RatingHandler(repo ratingSetter) MQHandler {
 			return nil
 		}
 
-		if err := repo.SetRating(ctx, ratingEvent.VideoID, ratingEvent.AccountID, stat); err != nil {
-			_ = dc.Requeue(ctx)
-			return err
-		}
+		err = retryWithBackOff(3, func() error {
+			return repo.SetRating(ctx, ratingEvent.VideoID, ratingEvent.AccountID, stat)
+		})
 
+		if err != nil {
+			log.Printf("rating 处理失败重试之后丢弃: %v", err)
+			_ = dc.Accept(ctx)
+			return nil
+		}
 		return dc.Accept(ctx)
 	}
 }
