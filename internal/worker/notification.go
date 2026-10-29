@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"feedsystem/internal/data"
 	"feedsystem/internal/model/account"
 	"feedsystem/internal/model/video"
@@ -108,18 +109,23 @@ func processLike(ctx context.Context, db *gorm.DB, cache *data.RedisClient, hub 
 
 	// 转换为notification事件
 	notifiacitonEvent := account.Notification{
-		RecipientID: authorID,
-		SenderID:    likeEvent.AccountID,
-		Type:        "like",
-		TargetID:    likeEvent.VideoID,
-		IsRead:      false,
-		Content:     "点赞了你的视频",
+		RecipientID:   authorID,
+		SenderID:      likeEvent.AccountID,
+		Type:          "like",
+		TargetID:      likeEvent.VideoID,
+		IsRead:        false,
+		Content:       "点赞了你的视频",
+		SourceEventID: likeEvent.EventID,
 	}
 
 	// 存入DB中的notifications表
-	if err := db.WithContext(ctx).Create(&notifiacitonEvent).Error; err != nil {
-		log.Printf("notificaton create fail,err: %v", err)
+	created, err := createNotification(ctx, db, &notifiacitonEvent)
+	if err != nil {
 		return err
+	}
+
+	if !created { //幂等跳过，不用计数/推送
+		return nil
 	}
 
 	// 推送信息给在线用户
@@ -142,18 +148,23 @@ func processPublish(ctx context.Context, db *gorm.DB, cache *data.RedisClient, h
 
 	// 转换为notification事件
 	notifiacitonEvent := account.Notification{
-		RecipientID: commentEvent.AuthorID,
-		SenderID:    commentEvent.AccountID,
-		Type:        "comment",
-		TargetID:    commentEvent.VideoID,
-		IsRead:      false,
-		Content:     "评论了你的视频",
+		RecipientID:   commentEvent.AuthorID,
+		SenderID:      commentEvent.AccountID,
+		Type:          "comment",
+		TargetID:      commentEvent.VideoID,
+		IsRead:        false,
+		Content:       "评论了你的视频",
+		SourceEventID: commentEvent.EventID,
 	}
 
 	// 存入DB中的notifications表
-	if err := db.WithContext(ctx).Create(&notifiacitonEvent).Error; err != nil {
-		log.Printf("notificaton create fail,err: %v", err)
+	created, err := createNotification(ctx, db, &notifiacitonEvent)
+	if err != nil {
 		return err
+	}
+
+	if !created { //幂等跳过，不用计数/推送
+		return nil
 	}
 
 	// 推送信息给视频作者
@@ -174,18 +185,24 @@ func processPublish(ctx context.Context, db *gorm.DB, cache *data.RedisClient, h
 			continue
 		}
 		mention := account.Notification{
-			RecipientID: v.ID,
-			SenderID:    commentEvent.AccountID,
-			Type:        "mention",
-			TargetID:    commentEvent.VideoID,
-			IsRead:      false,
-			Content:     "提及了你",
+			RecipientID:   v.ID,
+			SenderID:      commentEvent.AccountID,
+			Type:          "mention",
+			TargetID:      commentEvent.VideoID,
+			IsRead:        false,
+			Content:       "提及了你",
+			SourceEventID: commentEvent.EventID,
 		}
 		// 先入库再推送
-		if err := db.WithContext(ctx).Create(&mention).Error; err != nil {
-			log.Printf("notificaton create fail,err: %v", err)
+		created, err := createNotification(ctx, db, &mention)
+		if err != nil {
 			return err
 		}
+
+		if !created { //幂等跳过，不用计数/推送
+			return nil
+		}
+
 		incrUnread(ctx, db, cache, mention.RecipientID)
 		hub.Push(v.ID, &mention)
 	}
@@ -217,18 +234,23 @@ func processFollow(ctx context.Context, db *gorm.DB, cache *data.RedisClient, hu
 
 	// 转换为notification事件
 	notifiacitonEvent := account.Notification{
-		RecipientID: socialEvent.VloggerID,
-		SenderID:    socialEvent.FollowerID,
-		Type:        "follow",
-		TargetID:    socialEvent.FollowerID,
-		IsRead:      false,
-		Content:     "关注你",
+		RecipientID:   socialEvent.VloggerID,
+		SenderID:      socialEvent.FollowerID,
+		Type:          "follow",
+		TargetID:      socialEvent.FollowerID,
+		IsRead:        false,
+		Content:       "关注你",
+		SourceEventID: socialEvent.EventID,
 	}
 
 	// 存入DB中的notifications表
-	if err := db.WithContext(ctx).Create(&notifiacitonEvent).Error; err != nil {
-		log.Printf("notificaton create fail,err: %v", err)
+	created, err := createNotification(ctx, db, &notifiacitonEvent)
+	if err != nil {
 		return err
+	}
+
+	if !created { //幂等跳过，不用计数/推送
+		return nil
 	}
 
 	// 推送信息给在线用户
@@ -236,4 +258,27 @@ func processFollow(ctx context.Context, db *gorm.DB, cache *data.RedisClient, hu
 	hub.Push(notifiacitonEvent.RecipientID, &notifiacitonEvent)
 	return nil
 
+}
+
+// createNotification 幂等创建通知事件记录在DB
+func createNotification(ctx context.Context, db *gorm.DB, notif *account.Notification) (bool, error) {
+	var cnt int64
+
+	err := db.WithContext(ctx).Model(&account.Notification{}).Where("source_event_id = ? AND recipient_id = ?", notif.SourceEventID, notif.RecipientID).Count(&cnt).Error
+	if err != nil {
+		return false, err
+	}
+
+	if cnt > 0 {
+		return false, nil // 已经存在，幂等跳过
+	}
+
+	if err := db.WithContext(ctx).Create(notif).Error; err != nil {
+		if errors.Is(err, gorm.ErrDuplicatedKey) {
+			return false, nil // 并发兜底，唯一索引挡住
+		}
+		return false,err
+	}
+
+	return true, nil
 }
