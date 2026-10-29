@@ -225,11 +225,11 @@ func (r *ratingRepo) WarmupRatingCache(ctx context.Context, accountID uint) erro
 	}
 
 	if len(liked) == 0 {
-		liked = append(liked,0)
+		liked = append(liked, 0)
 	}
 
 	if len(disliked) == 0 {
-		disliked = append(disliked,0)
+		disliked = append(disliked, 0)
 	}
 
 	r.cache.SAdd(ctx, likedKey, liked...)
@@ -302,26 +302,29 @@ func (r *ratingRepo) GetRatingCache(ctx context.Context, accountID uint, videoID
 	likedKey := r.cache.Key("account:%d:liked", accountID)
 	dislikedKey := r.cache.Key("account:%d:disliked", accountID)
 
-	members := make([]any,len(videoIDs))
-	for i,id := range videoIDs {
+	members := make([]any, len(videoIDs))
+	for i, id := range videoIDs {
 		members[i] = id
 	}
-	liked,err := r.cache.SMIsMember(ctx,likedKey,members...)
+	liked, err := r.cache.SMIsMember(ctx, likedKey, members...)
 	if err != nil {
-		return nil,err
+		return nil, err
 	}
-	disliked,err := r.cache.SMIsMember(ctx,dislikedKey,members...)
+	disliked, err := r.cache.SMIsMember(ctx, dislikedKey, members...)
 	if err != nil {
-		return nil,err
+		return nil, err
 	}
 
 	// 返回
 	result := make([]int8, len(videoIDs))
 	for i := range videoIDs {
 		switch {
-		case liked[i]: result[i] = 1
-		case disliked[i]: result[i] = -1
-		default: result[i] = 0
+		case liked[i]:
+			result[i] = 1
+		case disliked[i]:
+			result[i] = -1
+		default:
+			result[i] = 0
 		}
 	}
 	return result, nil

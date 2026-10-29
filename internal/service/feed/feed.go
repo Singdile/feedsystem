@@ -469,12 +469,12 @@ func (s *FeedService) stampStatus(ctx context.Context, accountID uint, views []v
 	}
 
 	// 先查cache
-	stats,err := s.ratingSvc.GetRatingCache(ctx,accountID,ids...)
+	stats, err := s.ratingSvc.GetRatingCache(ctx, accountID, ids...)
 	if err == nil {
 		for i := range views {
 			views[i].Status = stats[i]
 		}
-		return views,nil
+		return views, nil
 	}
 	// cache失效，降级DB
 	statusMap, err := s.ratingSvc.GetRatings(ctx, ids, accountID)

@@ -26,7 +26,7 @@ func OutboxPoller(ctx context.Context, db *gorm.DB, cache *data.RedisClient, pub
 
 			// get msgs
 			var msgs []feed.OutboxMsg
-			err := db.WithContext(ctx).Where("status = ?", "pending").Find(&msgs).Order("create_time ASC").Limit(100).Error
+			err := db.WithContext(ctx).Where("status = ?", "pending").Order("create_time ASC").Limit(100).Find(&msgs).Error
 			if err != nil {
 				log.Printf("outbox Poller Error: %v", err)
 				time.Sleep(1 * time.Second)
