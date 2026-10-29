@@ -277,7 +277,7 @@ func createNotification(ctx context.Context, db *gorm.DB, notif *account.Notific
 		if errors.Is(err, gorm.ErrDuplicatedKey) {
 			return false, nil // 并发兜底，唯一索引挡住
 		}
-		return false,err
+		return false, err
 	}
 
 	return true, nil
