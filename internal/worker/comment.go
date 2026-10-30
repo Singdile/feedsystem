@@ -34,16 +34,16 @@ func CommentHandler(repo CommentWriter) MQHandler {
 		}
 
 		if event.Action == "delete" {
-		err := retryWithBackOff(3, func() error {
-			return repo.Delete(ctx, event.CommentID)
-		})
+			err := retryWithBackOff(3, func() error {
+				return repo.Delete(ctx, event.CommentID)
+			})
 
-		if err != nil {
-			log.Printf("comment delete 处理失败重试之后丢弃: %v", err)
-			_ = dc.Accept(ctx)
-			return nil
-		}
-		return dc.Accept(ctx)
+			if err != nil {
+				log.Printf("comment delete 处理失败重试之后丢弃: %v", err)
+				_ = dc.Accept(ctx)
+				return nil
+			}
+			return dc.Accept(ctx)
 		}
 
 		// 组装
@@ -56,7 +56,6 @@ func CommentHandler(repo CommentWriter) MQHandler {
 			Content:   event.Content,
 			CreatedAt: event.OccurredAt,
 		}
-
 
 		err := retryWithBackOff(3, func() error {
 			return repo.Create(ctx, &comment)

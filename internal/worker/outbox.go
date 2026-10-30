@@ -39,6 +39,7 @@ func OutboxPoller(ctx context.Context, db *gorm.DB, cache *data.RedisClient, pub
 				event := feed.TimeLineEvent{
 					EventID:    fmt.Sprintf("%d", msg.ID),
 					VideoID:    msg.VideoID,
+					AuthorID:   msg.AuthorID,
 					CreateTime: msg.CreateTime.UnixMilli(),
 					OccurredAt: time.Now(),
 				}

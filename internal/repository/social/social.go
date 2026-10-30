@@ -89,6 +89,17 @@ func (r *socialRepo) ListFansByVloggerID(ctx context.Context, vloggerID uint) ([
 
 	return profiles, err
 }
+
+// ListFanIDs 查询作者的粉丝ID列表
+func (r *socialRepo) ListFanIDs(ctx context.Context, vloggerID uint) ([]uint, error) {
+	var fanIds []uint
+	err := r.db.Model(account.Social{}).Where("vlogger_id = ?", vloggerID).Select("follower_id").Find(&fanIds).Error
+	if err != nil {
+		return nil, err
+	}
+	return fanIds, nil
+}
+
 func (r *socialRepo) IsFollowed(ctx context.Context, fanID, vloggerID uint) (bool, error) {
 	var cnt int64
 	err := r.db.Model(account.Social{}).Where("follower_id = ? AND vlogger_id = ?", fanID, vloggerID).Count(&cnt).Error

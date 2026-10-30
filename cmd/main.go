@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"feedsystem/internal/pkg/jwt"
+	"feedsystem/internal/repository/social"
 	"feedsystem/internal/worker"
 	"fmt"
 	"log"
@@ -57,8 +58,9 @@ func main() {
 
 	// outboxPoller 无论mq 是否可用都可以使用
 	worker.OutboxPoller(ctx, DB, rdb, timelinePublisher)
+	socialRepo := social.NewSocialRepo(DB)
 	if mq != nil && timelinePublisher != nil {
-		worker.RunConsumer(ctx, mq, data.TimelineQueue, worker.TimelineHandler(rdb))
+		worker.RunConsumer(ctx, mq, data.TimelineQueue, worker.TimelineHandler(rdb, socialRepo))
 	}
 
 	// 连接minio

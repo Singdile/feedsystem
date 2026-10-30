@@ -330,3 +330,20 @@ return n
 `)
 	return script.Run(ctx, c.rdb, []string{key}).Int64()
 }
+
+// ZAddFanout 将同一视频扇出写入多个用户的关注流 ZSET
+func (c *RedisClient) ZAddFanout(ctx context.Context, member feed.ZMember, fanIDs []uint) error {
+	if len(fanIDs) == 0 {
+		return nil
+	}
+
+	pipe := c.rdb.Pipeline()
+
+	for _, fid := range fanIDs {
+		key := fmt.Sprintf("feed:following:%d", fid)
+		pipe.ZAdd(ctx, key, redis.Z{Score: member.Score, Member: member.Member})
+	}
+
+	_, err := pipe.Exec(ctx)
+	return err
+}

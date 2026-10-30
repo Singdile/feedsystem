@@ -125,6 +125,7 @@ func (r *videoRepo) CreateWithOutbox(ctx context.Context, v *video.Video) (*vide
 		// 填写outboxMSg信息
 		var m = &feed.OutboxMsg{
 			VideoID:   v.ID,
+			AuthorID:  v.AuthorID,
 			EventType: "publish",
 			Status:    "pending",
 		}

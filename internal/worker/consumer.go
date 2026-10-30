@@ -2,9 +2,7 @@ package worker
 
 import (
 	"context"
-	"encoding/json"
 	"feedsystem/internal/data"
-	"feedsystem/internal/model/feed"
 	"log"
 	"time"
 
@@ -12,28 +10,6 @@ import (
 )
 
 type MQHandler func(ctx context.Context, deliveryContext rmq.IDeliveryContext) error
-
-func TimelineHandler(cache *data.RedisClient) MQHandler {
-	return func(ctx context.Context, dc rmq.IDeliveryContext) error {
-		var event feed.TimeLineEvent
-		if err := json.Unmarshal(dc.Message().GetData(), &event); err != nil {
-			_ = dc.Accept(ctx) // 解析失败，说明内容本身有问题，重试也是一样的，所以确认来删除，未来可以放置死信队列
-			return nil
-		}
-
-		// msg ok, but write not ok. retry
-		err := retryWithBackOff(3, func() error {
-			return writeTimeline(ctx, cache, event)
-		})
-
-		if err != nil {
-			log.Printf("timeline 处理失败重试之后丢弃: %v", err)
-			_ = dc.Accept(ctx)
-			return nil
-		}
-		return dc.Accept(ctx)
-	}
-}
 
 // RunConsumer 通用的消费循环，新建一个消费者链接上队列，循环进行消费，拿到信息,并对信息进行处理
 func RunConsumer(ctx context.Context, rmq *data.RabbitMQClient, queueName string, handle MQHandler) {
