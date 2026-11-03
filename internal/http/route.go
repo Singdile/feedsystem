@@ -48,7 +48,7 @@ func SetRouter(app *App) *gin.Engine {
 	feedSvc := feedsvc.NewFeedService(feedRepo, videoRepo, ratingProvider, socialRepo)
 	ratingSvc := videosvc.NewRatingService(ratingRepo, videoRepo, mqRepo, popularityMQ, ratingRepo)
 	commentSvc := videosvc.NewCommentService(commentRepo, commentMQ, videoRepo, popularityMQ)
-	socialSvc := socialsvc.NewSocialService(socialRepo, userRepo, socialMQ)
+	socialSvc := socialsvc.NewSocialService(socialRepo, userRepo, socialMQ,feedSvc)
 
 	// handlers（依赖 services）
 	userHandler := user.NewHandler(userSvc)

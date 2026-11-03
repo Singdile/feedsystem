@@ -28,17 +28,24 @@ type SocialMQ interface {
 	PublishFollow(ctx context.Context, followerID, vloggerID uint) error
 }
 
+// 关注回填视频到用户的关注流时间线上
+type FollowingBackfiller interface {
+	BackfillFollowing(ctx context.Context, fanID, vloggerID uint) error
+}
+
 type SocialService struct {
 	repo         SocialRepo
 	userProvider UserProvider
 	socialMQ     SocialMQ
+	backfiller   FollowingBackfiller
 }
 
-func NewSocialService(db SocialRepo, userprovider UserProvider, socialMQ SocialMQ) *SocialService {
+func NewSocialService(db SocialRepo, userprovider UserProvider, socialMQ SocialMQ, backfiller FollowingBackfiller) *SocialService {
 	return &SocialService{
 		repo:         db,
 		userProvider: userprovider,
 		socialMQ:     socialMQ,
+		backfiller:   backfiller,
 	}
 }
 
@@ -70,6 +77,13 @@ func (s *SocialService) Follow(ctx context.Context, fanID, vloggerID uint) error
 	if s.socialMQ != nil {
 		if err := s.socialMQ.PublishFollow(ctx, fanID, vloggerID); err != nil {
 			log.Printf("socail follow 事件通知发布失败: %v", err)
+		}
+	}
+
+	// 回填关注博主的视频到用户的关注时间线
+	if s.backfiller != nil {
+		if err := s.backfiller.BackfillFollowing(ctx, fanID, vloggerID); err != nil {
+			log.Printf("关注流回填失败 fan=%d vlogger=%d: %v", fanID, vloggerID, err) // 只 log，不影响关注
 		}
 	}
 	return nil
