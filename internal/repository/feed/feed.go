@@ -107,3 +107,8 @@ func (r *feedRepo) ListLatestByAuthors(ctx context.Context, authordIDs []uint, c
 	err := query.Limit(limit).Find(&items).Error
 	return items, err
 }
+
+// Del 删除 key（取关清空关注流时间线用）
+func (r *feedRepo) Del(ctx context.Context, key string) error {
+	return r.cache.Del(ctx, key)
+}

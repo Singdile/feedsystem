@@ -63,7 +63,9 @@ func (m *MockFeedRepo) GetBytes(ctx context.Context, key string) ([]byte, error)
 func (m *MockFeedRepo) SetBytes(ctx context.Context, key string, value []byte, ttl time.Duration) error {
 	return m.cache.SetBytes(ctx, key, value, ttl)
 }
-
+func (m *MockFeedRepo) Del(ctx context.Context, key string) error {
+    return m.cache.Del(ctx, key)
+}
 // 冷数据查询  mock 的方法
 func (m *MockFeedRepo) ListLatest(ctx context.Context, cursor *video.Cursor, limit int) ([]video.Video, error) {
 	args := m.Called(ctx, cursor, limit)

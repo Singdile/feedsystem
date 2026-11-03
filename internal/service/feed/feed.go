@@ -45,6 +45,7 @@ type FeedRepo interface {
 	GetBytes(ctx context.Context, key string) ([]byte, error)
 	SetBytes(ctx context.Context, key string, value []byte, ttl time.Duration) error
 	Exists(ctx context.Context, key string) (bool, error)
+	Del(ctx context.Context, key string) error
 }
 
 type VideoProvider interface {
@@ -817,4 +818,9 @@ func (s *FeedService) BackfillFollowing(ctx context.Context, fanID, vloggerID ui
 		return err
 	}
 	return s.repo.Expire(ctx, key, 7*24*time.Hour) // 重置 TT
+}
+
+// ClearFollowingTimeline 取关时清空用户关注流时间线
+func (s *FeedService) ClearFollowingTimeline(ctx context.Context,fanID uint) error {
+	return s.repo.Del(ctx,s.repo.Key("feed:following:%d",fanID))
 }

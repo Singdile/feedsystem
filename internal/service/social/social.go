@@ -31,6 +31,7 @@ type SocialMQ interface {
 // 关注回填视频到用户的关注流时间线上
 type FollowingBackfiller interface {
 	BackfillFollowing(ctx context.Context, fanID, vloggerID uint) error
+	ClearFollowingTimeline(ctx context.Context, fanID uint) error
 }
 
 type SocialService struct {
@@ -107,6 +108,12 @@ func (s *SocialService) UnFollow(ctx context.Context, fanID, vloggerID uint) err
 
 	if err := s.repo.Delete(ctx, fanID, vloggerID); err != nil {
 		return apperrors.FromError(err)
+	}
+
+	if s.backfiller != nil {
+		if err := s.backfiller.ClearFollowingTimeline(ctx,fanID); err != nil {
+			log.Printf("关注流清楚失败，fan = %d: %v",fanID,err)
+		}
 	}
 
 	return nil
