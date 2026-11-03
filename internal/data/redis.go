@@ -139,6 +139,23 @@ func (c *RedisClient) ZAdd(ctx context.Context, key string, member feed.ZMember)
 	return err
 }
 
+func (c *RedisClient) ZAddBatch(ctx context.Context, key string, members []feed.ZMember) error {
+	if len(members) == 0 {
+		return nil
+	}
+
+	vals := make([]redis.Z, 0, len(members))
+
+	for _, m := range members {
+		vals = append(vals, redis.Z{
+			Score:  m.Score,
+			Member: m.Member,
+		})
+	}
+
+	return c.rdb.ZAdd(ctx, key, vals...).Err()
+}
+
 // ZRangeWithScores 返回排名区间 [start, stop] 的元素及分数
 func (c *RedisClient) ZRangeWithScores(ctx context.Context, key string, start, stop int64) ([]feed.ZMember, error) {
 	// 使用 ZRangeArgsWithScores 获取指定范围的元素及分数

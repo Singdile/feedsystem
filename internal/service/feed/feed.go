@@ -26,15 +26,19 @@ const (
 
 type FeedRepo interface {
 	// 时间线操作,负责索引拿到显示vidoID
+	// ZRevRangeByScore 返回 zset 中 score <= maxScore 的元素，按 score 从大到小排序，返回 limit 个
 	ZRevRangeByScore(ctx context.Context, key string, maxScore float64, maxID uint, limit int) ([]feed.ZMember, error)
 	ZRangeWithScores(ctx context.Context, key string, start, stop int64) ([]feed.ZMember, error)
 	ZAdd(ctx context.Context, key string, member feed.ZMember) error
+	ZAddBatch(ctx context.Context, key string, members []feed.ZMember) error
 	ZUnionStore(ctx context.Context, dest string, keys []string, aggregate string) error
 	Expire(ctx context.Context, key string, expire time.Duration) error
 	ZRevRange(ctx context.Context, key string, start, stop int64) ([]feed.ZMember, error) //逆序
 
 	// 冷数据查询
 	ListLatest(ctx context.Context, cursor *video.Cursor, limit int) ([]video.Video, error)
+	ListLatestByAuthors(ctx context.Context, authordIDs []uint, cursor *video.Cursor, limit int) ([]video.Video, error)
+
 	// 实体缓存 (L2 redis)
 	Key(format string, a ...any) string
 	MGet(ctx context.Context, keys ...string) ([]any, error)
@@ -56,20 +60,27 @@ type RatingProvider interface {
 	GetRatingCache(ctx context.Context, accountID uint, videoIDs ...uint) ([]int8, error)
 }
 
-type FeedService struct {
-	repo       FeedRepo
-	videoSvc   VideoProvider
-	ratingSvc  RatingProvider
-	localcache *cache.Cache       // go-cache:L1,默认5s过期
-	group      singleflight.Group // 防并发
+// 返回关注作者列表
+type FollowProvider interface {
+	ListFollowingIDs(ctx context.Context, fanID uint) ([]uint, error)
 }
 
-func NewFeedService(repo FeedRepo, videoSvc VideoProvider, ratingSvc RatingProvider) *FeedService {
+type FeedService struct {
+	repo           FeedRepo
+	videoSvc       VideoProvider
+	ratingSvc      RatingProvider
+	followProvider FollowProvider
+	localcache     *cache.Cache       // go-cache:L1,默认5s过期
+	group          singleflight.Group // 防并发
+}
+
+func NewFeedService(repo FeedRepo, videoSvc VideoProvider, ratingSvc RatingProvider, followProvider FollowProvider) *FeedService {
 	return &FeedService{
-		repo:       repo,
-		videoSvc:   videoSvc,
-		localcache: cache.New(l1CacheTTL, 10*time.Second),
-		ratingSvc:  ratingSvc,
+		repo:           repo,
+		videoSvc:       videoSvc,
+		localcache:     cache.New(l1CacheTTL, 10*time.Second),
+		ratingSvc:      ratingSvc,
+		followProvider: followProvider,
 	}
 }
 
@@ -563,4 +574,209 @@ func (s *FeedService) ListByPopularity(ctx context.Context, accountID uint, asof
 		Offset:  offset + int64(limit),
 		HasMore: hasmore,
 	}, nil
+}
+
+// ListByFollowing 用户关注流的视频数据
+func (s *FeedService) ListByFollowing(ctx context.Context, accountID uint, cursorStr string, limit int) (*FeedListResult, error) {
+	key := s.repo.Key("feed:following:%d", accountID)
+
+	cursor := &video.Cursor{
+		CreatedAt: time.Now(),
+		ID:        0,
+	}
+	if cursorStr != "" {
+		cur, err := video.DecodeCursor(cursorStr)
+		if err != nil {
+			return nil, apperrors.NewAppError(http.StatusBadRequest, "cursor 参数错误")
+		}
+		cursor = &cur
+	}
+
+	reqTime := float64(time.Now().UnixMilli())
+	if cursor != nil {
+		reqTime = float64(cursor.CreatedAt.UnixMilli())
+	}
+
+	// 确保cache可用，若没有数据，则触发懒加载冷数据
+	if err := s.ensureFollowingTimeLine(ctx, accountID); err != nil { //cache不可用，降级DB查询
+		return s.listFollowingFromDB(ctx, accountID, cursor, limit)
+	}
+
+	// cache 可用，查询关注流数据
+	tail, err := s.repo.ZRangeWithScores(ctx, key, 0, 0)
+	if err != nil || len(tail) == 0 {
+		return s.listFollowingFromDB(ctx, accountID, cursor, limit)
+	}
+
+	watermark := tail[0].Score
+	if reqTime <= watermark { //热区数据最老的视频都比要查询的视频新，所以直接查询数据库
+		return s.listFollowingFromDB(ctx, accountID, cursor, limit)
+	}
+
+	// 先查询cache，热区数据
+	members, err := s.repo.ZRevRangeByScore(ctx, key, float64(cursor.CreatedAt.UnixMilli()), cursor.ID, limit+1)
+	if err != nil {
+		return s.listFollowingFromDB(ctx, accountID, cursor, limit)
+	}
+
+	hotMore := len(members) > limit
+	if hotMore {
+		members = members[:limit]
+	}
+
+	ids := make([]uint, 0, len(members))
+	for _, v := range members {
+		id, err := strconv.ParseUint(v.Member, 10, 64)
+		if err != nil || id == 0 {
+			continue
+		}
+		ids = append(ids, uint(id))
+	}
+
+	entities, err := s.GetVideoByIDs(ctx, ids)
+	if err != nil {
+		return nil, apperrors.NewAppError(http.StatusInternalServerError, "视频查询失败")
+	}
+
+	hasMore := hotMore
+	// 判断还需不需要冷数据
+	if !hotMore && len(entities) < limit {
+		remain := limit - len(entities)
+		coldcursor := cursor
+		if len(entities) > 0 {
+			last := entities[len(entities)-1]
+			coldcursor = &video.Cursor{
+				CreatedAt: last.CreatedAt,
+				ID:        last.ID,
+			}
+		}
+
+		authors, err := s.followProvider.ListFollowingIDs(ctx, accountID)
+		if err != nil {
+			return nil, apperrors.NewAppError(http.StatusInternalServerError, "用户关注列表查询失败")
+		}
+
+		cold, err := s.repo.ListLatestByAuthors(ctx, authors, coldcursor, remain+1)
+		if err != nil {
+			return nil, apperrors.NewAppError(http.StatusInternalServerError, "视频查询失败")
+		}
+		coldMore := len(cold) > remain
+		if coldMore {
+			cold = cold[:remain]
+			hasMore = coldMore
+		}
+		entities = append(entities, cold...)
+	}
+
+	next := ""
+	if hasMore && len(entities) > 0 {
+		last := entities[len(entities)-1]
+		next = video.EncodeCursor(video.Cursor{
+			CreatedAt: last.CreatedAt,
+			ID:        last.ID,
+		})
+	}
+	// 关注流为空（未关注任何人/关注者无作品）直接返回空，避免 BuildViews 空列表报错
+	if len(entities) == 0 {
+		return &FeedListResult{Items: []video.VideoView{}, NextCursor: next}, nil
+	}
+
+	// 数据查询结束，sign url 获取可播放资源
+	views, err := s.videoSvc.BuildViews(ctx, entities)
+	if err != nil {
+		return nil, apperrors.NewAppError(http.StatusInternalServerError, "播放视频失败")
+	}
+
+	// 获取用户对视频的评价信息
+	if _, err = s.stampStatus(ctx, accountID, views); err != nil {
+		log.Printf("failed to stamp views: %v", err)
+	}
+
+	return &FeedListResult{Items: views, NextCursor: next}, nil
+}
+
+// listFollowingFromDB 直接DB查询关注作者的视频
+func (s *FeedService) listFollowingFromDB(ctx context.Context, accountID uint, cursor *video.Cursor, limit int) (*FeedListResult, error) {
+	// 查询用户关注博主id
+	authors, err := s.followProvider.ListFollowingIDs(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
+	// 查询博主视频
+	vs, err := s.repo.ListLatestByAuthors(ctx, authors, cursor, limit+1)
+	if err != nil {
+		return nil, apperrors.NewAppError(http.StatusInternalServerError, "查询失败")
+	}
+
+	hasMore := len(vs) > limit
+	if hasMore {
+		vs = vs[:limit]
+	}
+
+	// 计算next_cursor
+	next := ""
+	if hasMore && len(vs) > 0 {
+		last := vs[len(vs)-1]
+		next = video.EncodeCursor(video.Cursor{
+			CreatedAt: last.CreatedAt,
+			ID:        last.ID,
+		})
+	}
+
+	// 关注流为空直接返回空，避免 BuildViews 空列表报错
+	if len(vs) == 0 {
+		return &FeedListResult{Items: []video.VideoView{}, NextCursor: next}, nil
+	}
+
+	// 签发可播放的视频信息
+	views, err := s.videoSvc.BuildViews(ctx, vs)
+	if err != nil {
+		return nil, apperrors.NewAppError(http.StatusInternalServerError, "视频播放失败")
+	}
+
+	return &FeedListResult{Items: views, NextCursor: next}, nil
+}
+
+// ensureFollowingTimeLine 判断是否存在，不存在懒记载用户关注视频流
+func (s *FeedService) ensureFollowingTimeLine(ctx context.Context, accountID uint) error {
+	key := s.repo.Key("feed:following:%d", accountID)
+	exist, err := s.repo.Exists(ctx, key)
+	if err != nil {
+		return err
+	}
+
+	if exist { // 存在
+		return nil
+	}
+
+	// 不存在，尝试重建
+	authors, err := s.followProvider.ListFollowingIDs(ctx, accountID)
+	if err != nil {
+		return err
+	}
+
+	vs, err := s.repo.ListLatestByAuthors(ctx, authors, nil, 1000)
+	if err != nil {
+		return err
+	}
+
+	// 写入cache
+	members := make([]feed.ZMember, len(vs))
+	for i, v := range vs {
+		members[i].Score = float64(v.CreatedAt.UnixMilli())
+		members[i].Member = strconv.FormatUint(uint64(v.ID), 10)
+	}
+
+	if len(members) == 0 {
+		members = []feed.ZMember{{
+			Score:  0,
+			Member: "0",
+		},
+		}
+	}
+	if err := s.repo.ZAddBatch(ctx, key, members); err != nil {
+		return err
+	}
+
+	return s.repo.Expire(ctx, key, 7*24*time.Hour)
 }

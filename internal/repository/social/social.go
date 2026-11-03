@@ -69,6 +69,16 @@ func (r *socialRepo) ListVloggerIDByFollow(ctx context.Context, fanID uint) ([]a
 
 	return profiles, nil
 }
+
+func (r *socialRepo) ListFollowingIDs(ctx context.Context, fanID uint) ([]uint, error) {
+	var vloggerIds []uint
+	err := r.db.Model(account.Social{}).Where("follower_id = ?", fanID).Select("vlogger_id").Find(&vloggerIds).Error
+	if err != nil {
+		return nil, err
+	}
+	return vloggerIds, err
+}
+
 func (r *socialRepo) ListFansByVloggerID(ctx context.Context, vloggerID uint) ([]account.Profile, error) {
 	var fanIds []uint
 	err := r.db.Model(account.Social{}).Where("vlogger_id = ?", vloggerID).Select("follower_id").Find(&fanIds).Error

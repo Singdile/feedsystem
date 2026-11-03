@@ -112,6 +112,31 @@ func (h *Handler) ListPopular(c *gin.Context) {
 	response.OK(c, res)
 }
 
+// ListFollowing 获取关注流视频数据
+// GET /feed/following?cursor&limit
+func (h *Handler) ListFollowing(c *gin.Context) {
+	// 参数解析
+	cursor := c.Query("cursor")
+	limit, err := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, "limit wrong")
+		return
+	}
+
+	accountID, ok := currentAccountID(c)
+	if !ok {
+		response.Fail(c, http.StatusUnauthorized, "用户未登录")
+		return
+	}
+
+	res, err := h.svc.ListByFollowing(c.Request.Context(), accountID, cursor, limit)
+	if err != nil {
+		response.FromError(c, err)
+		return
+	}
+	response.OK(c, res)
+}
+
 // currentAccountID 从 JWT 上下文取当前用户
 func currentAccountID(c *gin.Context) (uint, bool) {
 	v, exist := c.Get("user_id")

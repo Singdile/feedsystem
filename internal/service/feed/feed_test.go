@@ -34,6 +34,9 @@ func (m *MockFeedRepo) ZRangeWithScores(ctx context.Context, key string, start, 
 func (m *MockFeedRepo) ZAdd(ctx context.Context, key string, member feed.ZMember) error {
 	return m.cache.ZAdd(ctx, key, member)
 }
+func (m *MockFeedRepo) ZAddBatch(ctx context.Context, key string, members []feed.ZMember) error {
+	return m.cache.ZAddBatch(ctx, key, members)
+}
 func (m *MockFeedRepo) ZUnionStore(ctx context.Context, dest string, keys []string, aggregate string) error {
 	return m.cache.ZUnionStore(ctx, dest, keys, aggregate)
 }
@@ -64,6 +67,13 @@ func (m *MockFeedRepo) SetBytes(ctx context.Context, key string, value []byte, t
 // 冷数据查询  mock 的方法
 func (m *MockFeedRepo) ListLatest(ctx context.Context, cursor *video.Cursor, limit int) ([]video.Video, error) {
 	args := m.Called(ctx, cursor, limit)
+	v, _ := args.Get(0).([]video.Video)
+	return v, args.Error(1)
+}
+
+// ListLatestByAuthors 按作者列表查冷数据（关注流用）
+func (m *MockFeedRepo) ListLatestByAuthors(ctx context.Context, authorIDs []uint, cursor *video.Cursor, limit int) ([]video.Video, error) {
+	args := m.Called(ctx, authorIDs, cursor, limit)
 	v, _ := args.Get(0).([]video.Video)
 	return v, args.Error(1)
 }
@@ -135,7 +145,7 @@ func TestListFeed_EmptyCacheANDDB(t *testing.T) {
 	repo.On("ListLatest", mock.Anything, mock.Anything, 1000).Return([]video.Video{}, nil)
 
 	// 执行
-	svc := NewFeedService(repo, videoProvider, ratingProvider)
+	svc := NewFeedService(repo, videoProvider, ratingProvider, nil)
 	res, err := svc.ListFeed(context.Background(), 0, "", 10)
 
 	// 断言 参数匹配的特定函数被执行过了
@@ -172,7 +182,7 @@ func TestListFeed_DBFallback(t *testing.T) {
 	repo.On("ListLatest", mock.Anything, mock.Anything, 11).Return(dbVideos, nil)
 	videoProvider.On("BuildViews", mock.Anything, dbVideos).Return(dbViews, nil)
 	// 执行
-	svc := NewFeedService(repo, videoProvider, ratingProvider)
+	svc := NewFeedService(repo, videoProvider, ratingProvider, nil)
 	res, err := svc.ListFeed(context.Background(), 0, "", 10)
 
 	// 断言
@@ -206,7 +216,7 @@ func TestListFeed_Rebuild(t *testing.T) {
 		{ID: 1, Title: "V1", CreatedAt: v1.CreatedAt},
 	}, nil).Once()
 
-	svc := NewFeedService(repo, videoProvider, ratingProvider)
+	svc := NewFeedService(repo, videoProvider, ratingProvider, nil)
 	res, err := svc.ListFeed(ctx, 0, "", 2)
 
 	require.NoError(t, err)
@@ -230,7 +240,7 @@ func TestListFeed_CursorInHotPath(t *testing.T) {
 	videoProvider := &MockVideoProvider{}
 	ratingProvider := &MockRatingProvider{}
 
-	svc := NewFeedService(repo, videoProvider, ratingProvider)
+	svc := NewFeedService(repo, videoProvider, ratingProvider, nil)
 
 	// 准备缓存数据
 	dbVideos := []video.Video{
@@ -327,7 +337,7 @@ func TestListFeed_CursorINColdPath(t *testing.T) {
 	videoProvider.On("GetVideoEntitiesByIDs", mock.Anything, []uint{3}).Return(dbVideos[2:3], nil).Once()
 	videoProvider.On("BuildViews", mock.Anything, dbVideos[2:3]).Return(dbViews[2:3], nil).Once()
 
-	svc := NewFeedService(repo, videoProvider, ratingProvider)
+	svc := NewFeedService(repo, videoProvider, ratingProvider, nil)
 
 	// Page1：热区命中，返回 video3 + next_cursor
 	next1 := video.EncodeCursor(video.Cursor{CreatedAt: dbVideos[2].CreatedAt, ID: 3})
@@ -412,7 +422,7 @@ func TestListFeed_HotAndColdPath(t *testing.T) {
 	}
 	videoProvider.On("BuildViews", mock.Anything, videos[0:2]).Return(views[0:2], nil).Once()
 
-	svc := NewFeedService(repo, videoProvider, ratingProvider)
+	svc := NewFeedService(repo, videoProvider, ratingProvider, nil)
 	res, err := svc.ListFeed(ctx, 0, "", 2)
 	require.NoError(t, err)
 	require.Len(t, res.Items, 2)
@@ -432,7 +442,7 @@ func TestGetVideoByIDs_L1Cache(t *testing.T) {
 	repo := &MockFeedRepo{cache: cache}
 	videoProvider := &MockVideoProvider{}
 	ratingProvider := &MockRatingProvider{}
-	svc := NewFeedService(repo, videoProvider, ratingProvider)
+	svc := NewFeedService(repo, videoProvider, ratingProvider, nil)
 	ctx := context.Background()
 
 	// 预置 L1 本地缓存（进程内 go-cache）
@@ -454,7 +464,7 @@ func TestGetVideoByIDs_L2Redis(t *testing.T) {
 	repo := &MockFeedRepo{cache: cache}
 	videoProvider := &MockVideoProvider{}
 	ratingProvider := &MockRatingProvider{}
-	svc := NewFeedService(repo, videoProvider, ratingProvider)
+	svc := NewFeedService(repo, videoProvider, ratingProvider, nil)
 	ctx := context.Background()
 
 	// 预置 L2 实体缓存（Redis，DTO 序列化）
@@ -477,7 +487,7 @@ func TestGetVideoByIDs_L3DB(t *testing.T) {
 	repo := &MockFeedRepo{cache: cache}
 	videoProvider := &MockVideoProvider{}
 	ratingProvider := &MockRatingProvider{}
-	svc := NewFeedService(repo, videoProvider, ratingProvider)
+	svc := NewFeedService(repo, videoProvider, ratingProvider, nil)
 	ctx := context.Background()
 
 	v1 := video.Video{ID: 1, Title: "V1", VideoKey: "videos/1/1.mp4", CoverKey: "covers/1/1.png"}
@@ -503,7 +513,7 @@ func TestListByTag(t *testing.T) {
 	repo := &MockFeedRepo{cache: cache}
 	videoProvider := &MockVideoProvider{}
 	ratingProvider := &MockRatingProvider{}
-	svc := NewFeedService(repo, videoProvider, ratingProvider)
+	svc := NewFeedService(repo, videoProvider, ratingProvider, nil)
 	ctx := context.Background()
 
 	dbVideos := []video.Video{
@@ -535,7 +545,7 @@ func TestListFeed_AnonymousLikedStatus(t *testing.T) {
 	repo := &MockFeedRepo{cache: cache}
 	videoProvider := &MockVideoProvider{}
 	ratingProvider := &MockRatingProvider{}
-	svc := NewFeedService(repo, videoProvider, ratingProvider)
+	svc := NewFeedService(repo, videoProvider, ratingProvider, nil)
 	ctx := context.Background()
 
 	// 准备数据
@@ -584,7 +594,7 @@ func TestListFeed_LoggedInLikedStatus(t *testing.T) {
 	repo := &MockFeedRepo{cache: cache}
 	videoProvider := &MockVideoProvider{}
 	ratingProvider := &MockRatingProvider{}
-	svc := NewFeedService(repo, videoProvider, ratingProvider)
+	svc := NewFeedService(repo, videoProvider, ratingProvider, nil)
 	ctx := context.Background()
 
 	// 准备数据
@@ -631,7 +641,7 @@ func TestListFeed_LikedStatusCacheFallback(t *testing.T) {
 	repo := &MockFeedRepo{cache: cache}
 	videoProvider := &MockVideoProvider{}
 	ratingProvider := &MockRatingProvider{}
-	svc := NewFeedService(repo, videoProvider, ratingProvider)
+	svc := NewFeedService(repo, videoProvider, ratingProvider, nil)
 	ctx := context.Background()
 
 	accountID := uint(1)
@@ -666,7 +676,7 @@ func TestListFeed_DeletedVideo(t *testing.T) {
 	repo := &MockFeedRepo{cache: cache}
 	videoProvider := &MockVideoProvider{}
 	ratingProvider := &MockRatingProvider{}
-	svc := NewFeedService(repo, videoProvider, ratingProvider)
+	svc := NewFeedService(repo, videoProvider, ratingProvider, nil)
 	ctx := context.Background()
 
 	// 准备zset数据

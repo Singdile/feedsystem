@@ -45,7 +45,7 @@ func SetRouter(app *App) *gin.Engine {
 	// services（依赖 repos）
 	videoSvc := videosvc.NewVideoService(videoRepo, app.Cache, videoCacheClean, app.Cache)
 	userSvc := usersvc.NewUserService(userRepo, app.Cache, socialRepo, videoRepo, ratingRepo)
-	feedSvc := feedsvc.NewFeedService(feedRepo, videoRepo, ratingProvider)
+	feedSvc := feedsvc.NewFeedService(feedRepo, videoRepo, ratingProvider, socialRepo)
 	ratingSvc := videosvc.NewRatingService(ratingRepo, videoRepo, mqRepo, popularityMQ, ratingRepo)
 	commentSvc := videosvc.NewCommentService(commentRepo, commentMQ, videoRepo, popularityMQ)
 	socialSvc := socialsvc.NewSocialService(socialRepo, userRepo, socialMQ)
@@ -102,6 +102,7 @@ func SetRouter(app *App) *gin.Engine {
 	r.GET("/api/v1/feed", authmiddle.OptionalAuthMiddleWare(app.Cache), feedHandler.ListFeed)
 	r.GET("/api/v1/feed/tag", authmiddle.OptionalAuthMiddleWare(app.Cache), feedHandler.ListByTag)
 	r.GET("/api/v1/feed/popular", authmiddle.OptionalAuthMiddleWare(app.Cache), feedHandler.ListPopular)
+	r.GET("/api/v1/feed/following", authmiddle.JWTAuthMiddleWare(app.Cache), feedHandler.ListFollowing)
 	// rating video
 	ratingG := r.Group("/api/v1/videos", authmiddle.JWTAuthMiddleWare(app.Cache))
 	{

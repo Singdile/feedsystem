@@ -85,3 +85,25 @@ func (r *feedRepo) ZRevRange(ctx context.Context, key string, start, stop int64)
 func (r *feedRepo) Exists(ctx context.Context, key string) (bool, error) {
 	return r.cache.Exists(ctx, key)
 }
+
+// ZAddBatch 批量向一个ZSET写入多个成员
+func (r *feedRepo) ZAddBatch(ctx context.Context, key string, members []feed.ZMember) error {
+	return r.cache.ZAddBatch(ctx, key, members)
+}
+
+// ListLatestByAuthors 按照作者列表查询视频(游标分页，关注流冷数据/懒加载使用)
+func (r *feedRepo) ListLatestByAuthors(ctx context.Context, authordIDs []uint, cursor *video.Cursor, limit int) ([]video.Video, error) {
+	if len(authordIDs) == 0 {
+		return nil, nil
+	}
+
+	items := make([]video.Video, 0)
+	query := r.db.WithContext(ctx).Model(&video.Video{}).Where("author_id in (?)", authordIDs).Order("created_at desc,id desc")
+
+	if cursor != nil {
+		query = query.Where("(created_at < ?) OR (created_at = ? AND id < ?)", cursor.CreatedAt, cursor.CreatedAt, cursor.ID)
+	}
+
+	err := query.Limit(limit).Find(&items).Error
+	return items, err
+}
