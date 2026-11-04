@@ -25,10 +25,12 @@ type ViewBuildResult struct {
 	Failures []ViewBuilFailure
 }
 
+// 生成播放、封面链接
 type URLSigner interface {
 	PresignedGetObject(ctx context.Context, objectKey string, expiry time.Duration) (string, error)
 }
 
+// 查询视频标签
 type TagsGetter interface {
 	GetTagsByVideoIDs(ctx context.Context, ids []uint) (map[uint][]string, error)
 }
