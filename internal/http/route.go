@@ -37,7 +37,6 @@ func SetRouter(app *App) *gin.Engine {
 	commentRepo := videorepo.NewCommentRepo(app.DB, app.Cache)
 	feedRepo := feedrepo.NewFeedRepo(app.Cache, app.DB)
 	videoCacheClean := videorepo.NewVideoCacheCleaner(app.Cache)
-	ratingProvider := videorepo.NewRatingRepo(app.DB, app.Cache)
 	mqRepo := videorepo.NewRatingMQ(app.RatingMQPub)
 	commentMQ := videorepo.NewCommentMQ(app.CommentMQPub)
 	popularityMQ := videorepo.NewPopularityMQ(app.PopularityPub)
@@ -46,8 +45,8 @@ func SetRouter(app *App) *gin.Engine {
 	viewBuilder := videosvc.NewVideoViewBuilder(videoRepo, videoRepo)
 	videoSvc := videosvc.NewVideoService(videoRepo, app.Cache, videoCacheClean, app.Cache, viewBuilder)
 	userSvc := usersvc.NewUserService(userRepo, app.Cache, socialRepo, videoRepo, ratingRepo)
-	feedSvc := feedsvc.NewFeedService(feedRepo, videoRepo, ratingProvider, socialRepo, viewBuilder)
 	ratingSvc := videosvc.NewRatingService(ratingRepo, videoRepo, mqRepo, popularityMQ, ratingRepo)
+	feedSvc := feedsvc.NewFeedService(feedRepo, videoRepo, ratingSvc, socialRepo, viewBuilder)
 	commentSvc := videosvc.NewCommentService(commentRepo, commentMQ, videoRepo, popularityMQ)
 	socialSvc := socialsvc.NewSocialService(socialRepo, userRepo, socialMQ, feedSvc)
 

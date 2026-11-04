@@ -55,10 +55,7 @@ type VideoProvider interface {
 }
 
 type RatingProvider interface {
-	//DB
-	GetRatings(ctx context.Context, videoID []uint, accountID uint) (map[uint]int8, error)
-	//cache
-	GetRatingCache(ctx context.Context, accountID uint, videoIDs ...uint) ([]int8, error)
+    GetUserRatings(ctx context.Context, accountID uint, videoID []uint) (stat map[uint]int8, err error)
 }
 
 // 返回关注作者列表
@@ -495,22 +492,14 @@ func (s *FeedService) stampStatus(ctx context.Context, accountID uint, views []v
 		ids = append(ids, v.ID)
 	}
 
-	// 先查cache
-	stats, err := s.ratingSvc.GetRatingCache(ctx, accountID, ids...)
-	if err == nil {
-		for i := range views {
-			views[i].Status = stats[i]
-		}
-		return views, nil
-	}
-	// cache失效，降级DB
-	statusMap, err := s.ratingSvc.GetRatings(ctx, ids, accountID)
+	// 查询rating
+	statMap,err := s.ratingSvc.GetUserRatings(ctx,accountID,ids)
 	if err != nil {
-		return nil, err
+		return views,err
 	}
 
-	for i := range views {
-		views[i].Status = statusMap[views[i].ID]
+	for i,v := range views {
+		views[i].Status = statMap[v.ID]
 	}
 	return views, nil
 }

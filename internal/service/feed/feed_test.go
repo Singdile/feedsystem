@@ -126,20 +126,13 @@ type MockRatingProvider struct {
 	mock.Mock
 }
 
-func (m *MockRatingProvider) GetRating(ctx context.Context, videoID, accountID uint) (int8, error) {
-	args := m.Called(ctx, videoID, accountID)
-	return args.Get(0).(int8), args.Error(1)
-}
-func (m *MockRatingProvider) GetRatings(ctx context.Context, videoID []uint, accountID uint) (map[uint]int8, error) {
-	args := m.Called(ctx, videoID, accountID)
-	ans, _ := args.Get(0).(map[uint]int8)
-	return ans, args.Error(1)
-}
-func (m *MockRatingProvider) GetRatingCache(ctx context.Context, accountID uint, videoIDs ...uint) ([]int8, error) {
+func (m *MockRatingProvider) GetUserRatings(ctx context.Context, accountID uint, videoIDs []uint) (map[uint]int8, error) {
 	args := m.Called(ctx, accountID, videoIDs)
-	ans, _ := args.Get(0).([]int8)
-	return ans, args.Error(1)
+	statuses, _ := args.Get(0).(map[uint]int8)
+	return statuses, args.Error(1)
 }
+
+var _ RatingProvider = (*MockRatingProvider)(nil)
 
 func newTestCache(t *testing.T) (*data.RedisClient, *miniredis.Miniredis) {
 	t.Helper()
@@ -572,137 +565,71 @@ func TestListByTag(t *testing.T) {
 	videoProvider.AssertExpectations(t)
 }
 
-// TestListFeed_AnonymousLikedStatus 测试匿名登录，返回的视频status是否正确
-func TestListFeed_AnonymousLikedStatus(t *testing.T) {
-	cache, _ := newTestCache(t)
-	repo := &MockFeedRepo{cache: cache}
-	videoProvider := &MockVideoProvider{}
-	viewBuilder := newMockViewBuilder(t)
-	ratingProvider := &MockRatingProvider{}
-	svc := NewFeedService(repo, videoProvider, ratingProvider, nil, viewBuilder)
-	ctx := context.Background()
+// Feed 只验证业务查询及状态填充，缓存回退由 RatingService 测试覆盖。
+func TestStampStatus(t *testing.T) {
+	queryErr := errors.New("rating service unavailable")
+	for _, tc := range []struct {
+		name         string
+		accountID    uint
+		views        []video.VideoView
+		statuses     map[uint]int8
+		queryErr     error
+		wantStatuses []int8
+		skipQuery    bool
+	}{
+		{name: "anonymous", views: []video.VideoView{{ID: 30}, {ID: 10}}, wantStatuses: []int8{0, 0}, skipQuery: true},
+		{name: "nil_input", accountID: 7, skipQuery: true},
+		{name: "empty_input", accountID: 7, views: []video.VideoView{}, skipQuery: true},
+		{
+			name: "map_by_id_not_order", accountID: 7,
+			views:    []video.VideoView{{ID: 30, Title: "A"}, {ID: 10, Title: "B"}, {ID: 20, Title: "C"}},
+			statuses: map[uint]int8{10: -1, 30: 1}, wantStatuses: []int8{1, -1, 0},
+		},
+		{name: "no_ratings", accountID: 7, views: []video.VideoView{{ID: 30}}, statuses: map[uint]int8{}, wantStatuses: []int8{0}},
+		{name: "nil_status_map", accountID: 7, views: []video.VideoView{{ID: 30}}, wantStatuses: []int8{0}},
+		{
+			name: "query_failure_preserves_views", accountID: 7,
+			views:    []video.VideoView{{ID: 30, Title: "A", Status: 1}, {ID: 10, Title: "B", Status: -1}},
+			queryErr: queryErr, wantStatuses: []int8{1, -1},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			provider := &MockRatingProvider{}
+			provider.Test(t)
+			t.Cleanup(func() { provider.AssertExpectations(t) })
+			svc := &FeedService{ratingSvc: provider}
+			views := make([]video.VideoView, len(tc.views))
+			copy(views, tc.views)
+			if tc.views == nil {
+				views = nil
+			}
+			if !tc.skipQuery {
+				ids := make([]uint, len(views))
+				for i := range views {
+					ids[i] = views[i].ID
+				}
+				provider.On("GetUserRatings", t.Context(), tc.accountID, ids).
+					Return(tc.statuses, tc.queryErr).Once()
+			}
 
-	// 准备数据
-	accountID := uint(0)
-	views := []video.VideoView{
-		{
-			ID:            1,
-			Title:         "V1",
-			LikedCount:    1,
-			DislikedCount: 1,
-			CommentCount:  1,
-		},
-		{
-			ID:            2,
-			Title:         "V2",
-			LikedCount:    2,
-			DislikedCount: 2,
-			CommentCount:  2,
-		},
-		{
-			ID:            3,
-			Title:         "V3",
-			LikedCount:    3,
-			DislikedCount: 3,
-			CommentCount:  3,
-		},
+			result, err := svc.stampStatus(t.Context(), tc.accountID, views)
+
+			if tc.queryErr != nil {
+				require.ErrorIs(t, err, tc.queryErr)
+			} else {
+				require.NoError(t, err)
+			}
+			require.Len(t, result, len(tc.views))
+			for i := range result {
+				want := tc.views[i]
+				want.Status = tc.wantStatuses[i]
+				require.Equal(t, want, result[i])
+			}
+			if tc.skipQuery {
+				provider.AssertNotCalled(t, "GetUserRatings", mock.Anything, mock.Anything, mock.Anything)
+			}
+		})
 	}
-
-	// 匿名（accountID=0）：stampStatus 提前返回，不查询 rating
-	ans, err := svc.stampStatus(ctx, accountID, views)
-
-	require.NoError(t, err)
-	require.Equal(t, 3, len(ans))
-	require.Equal(t, int8(0), ans[0].Status)
-	require.Equal(t, int8(0), ans[1].Status)
-	require.Equal(t, int8(0), ans[2].Status)
-	// 匿名不调 GetRatingCache / GetRatings
-	ratingProvider.AssertNotCalled(t, "GetRatingCache", mock.Anything, mock.Anything, mock.Anything)
-	ratingProvider.AssertNotCalled(t, "GetRatings", mock.Anything, mock.Anything, mock.Anything)
-}
-
-// TestListFeed_LoggedInLikedStatus 测试登录用户，返回的视频status是否正确
-// status 走缓存查询（GetRatingCache）
-func TestListFeed_LoggedInLikedStatus(t *testing.T) {
-	cache, _ := newTestCache(t)
-	repo := &MockFeedRepo{cache: cache}
-	videoProvider := &MockVideoProvider{}
-	viewBuilder := newMockViewBuilder(t)
-	ratingProvider := &MockRatingProvider{}
-	svc := NewFeedService(repo, videoProvider, ratingProvider, nil, viewBuilder)
-	ctx := context.Background()
-
-	// 准备数据
-	accountID := uint(1)
-	views := []video.VideoView{
-		{
-			ID:            1,
-			Title:         "V1",
-			LikedCount:    1,
-			DislikedCount: 1,
-			CommentCount:  1,
-		},
-		{
-			ID:            2,
-			Title:         "V2",
-			LikedCount:    2,
-			DislikedCount: 2,
-			CommentCount:  2,
-		},
-		{
-			ID:            3,
-			Title:         "V3",
-			LikedCount:    3,
-			DislikedCount: 3,
-			CommentCount:  3,
-		},
-	}
-
-	// status 走缓存查询，mock GetRatingCache 返回与 views 顺序一致的 []int8
-	ratingProvider.On("GetRatingCache", mock.Anything, mock.Anything, mock.Anything).Return([]int8{1, -1, 0}, nil).Once()
-	ans, err := svc.stampStatus(ctx, accountID, views)
-	t.Logf("%#v", ans)
-
-	require.NoError(t, err)
-	require.Equal(t, 3, len(ans))
-	require.Equal(t, int8(1), ans[0].Status)
-	require.Equal(t, int8(-1), ans[1].Status)
-	require.Equal(t, int8(0), ans[2].Status)
-}
-
-// TestListFeed_LikedStatusCacheFallback 测试缓存失败时降级 DB 查询
-func TestListFeed_LikedStatusCacheFallback(t *testing.T) {
-	cache, _ := newTestCache(t)
-	repo := &MockFeedRepo{cache: cache}
-	videoProvider := &MockVideoProvider{}
-	viewBuilder := newMockViewBuilder(t)
-	ratingProvider := &MockRatingProvider{}
-	svc := NewFeedService(repo, videoProvider, ratingProvider, nil, viewBuilder)
-	ctx := context.Background()
-
-	accountID := uint(1)
-	views := []video.VideoView{
-		{ID: 1, Title: "V1"},
-		{ID: 2, Title: "V2"},
-		{ID: 3, Title: "V3"},
-	}
-
-	vs := map[uint]int8{
-		1: 1,
-		2: -1,
-		3: 0,
-	}
-
-	// 缓存失败（Redis 故障）→ 降级 GetRatings DB 查询
-	ratingProvider.On("GetRatingCache", mock.Anything, mock.Anything, mock.Anything).Return(nil, errors.New("redis down")).Once()
-	ratingProvider.On("GetRatings", mock.Anything, mock.Anything, mock.Anything).Return(vs, nil).Once()
-	ans, err := svc.stampStatus(ctx, accountID, views)
-
-	require.NoError(t, err)
-	require.Equal(t, 3, len(ans))
-	require.Equal(t, int8(1), ans[0].Status)
-	require.Equal(t, int8(-1), ans[1].Status)
-	require.Equal(t, int8(0), ans[2].Status)
 }
 
 // 测试当热区 zset 里面有数据，但是三层缓存查询出来的视频为空的时候
@@ -842,11 +769,12 @@ func TestFeedViewBuilderResults(t *testing.T) {
 					// 只为真正展示的项查询用户状态，失败项不能错位填入。
 					if outcome != "all_failed" {
 						ids := []uint{3, 2}
-						statuses := []int8{1, -1}
+						statuses := map[uint]int8{3: 1, 2: -1}
 						if outcome == "partial" {
-							ids, statuses = ids[:1], statuses[:1]
+							ids = ids[:1]
+							delete(statuses, 2)
 						}
-						ratings.On("GetRatingCache", mock.Anything, uint(7), ids).Return(statuses, nil).Once()
+						ratings.On("GetUserRatings", mock.Anything, uint(7), ids).Return(statuses, nil).Once()
 					}
 					res, err = svc.ListByFollowing(ctx, 7, "", 2)
 				case "following_cold":
@@ -1038,4 +966,42 @@ func (g *testTagsGetter) GetTagsByVideoIDs(_ context.Context, ids []uint) (map[u
 		return nil, g.err
 	}
 	return g.tags, nil
+}
+
+// 评价服务不可用时，HTTP 用例仍可返回视频，同时 stampStatus 保留可记录的错误。
+func TestListByTag_RatingFailureKeepsVideosAndCursor(t *testing.T) {
+	provider := &MockVideoProvider{}
+	ratings := &MockRatingProvider{}
+	builder := newMockViewBuilder(t)
+	provider.Test(t)
+	ratings.Test(t)
+	t.Cleanup(func() {
+		provider.AssertExpectations(t)
+		ratings.AssertExpectations(t)
+	})
+	base := time.Date(2026, time.November, 4, 8, 0, 0, 0, time.UTC)
+	videos := []video.Video{
+		{ID: 30, CreatedAt: base},
+		{ID: 10, CreatedAt: base.Add(-time.Second)},
+		{ID: 20, CreatedAt: base.Add(-2 * time.Second)},
+	}
+	views := []video.VideoView{
+		{ID: 30, Title: "A", PlayURL: "https://media.example/30", HashTags: []string{"旅行"}},
+		{ID: 10, Title: "B", PlayURL: "https://media.example/10"},
+	}
+	provider.On("ListByTag", t.Context(), "旅行", (*video.Cursor)(nil), 3).Return(videos, nil).Once()
+	builder.On("BuildSome", t.Context(), videos[:2]).Return(videosvc.ViewBuildResult{Items: views}).Once()
+	ratings.On("GetUserRatings", t.Context(), uint(7), []uint{30, 10}).
+		Return(nil, errors.New("rating service unavailable")).Once()
+	svc := NewFeedService(nil, provider, ratings, nil, builder)
+
+	res, err := svc.ListByTag(t.Context(), 7, "旅行", "", 2)
+
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.Equal(t, views, res.Items)
+	cursor, err := video.DecodeCursor(res.NextCursor)
+	require.NoError(t, err)
+	require.Equal(t, uint(10), cursor.ID)
+	require.True(t, videos[1].CreatedAt.Equal(cursor.CreatedAt))
 }
