@@ -7,6 +7,7 @@ import (
 	"feedsystem/internal/model/feed"
 	"feedsystem/internal/model/video"
 	apperrors "feedsystem/internal/pkg/errors"
+	videsvc "feedsystem/internal/service/video"
 	"fmt"
 	"log"
 	"net/http"
@@ -51,7 +52,6 @@ type FeedRepo interface {
 type VideoProvider interface {
 	ListByTag(ctx context.Context, tagName string, cursor *video.Cursor, limit int) ([]video.Video, error)
 	GetVideoEntitiesByIDs(ctx context.Context, ids []uint) ([]video.Video, error)
-	BuildViews(ctx context.Context, vs []video.Video) ([]video.VideoView, error)
 }
 
 type RatingProvider interface {
@@ -71,17 +71,19 @@ type FeedService struct {
 	videoSvc       VideoProvider
 	ratingSvc      RatingProvider
 	followProvider FollowProvider
+	viewBuilder    videsvc.ViewBuilder
 	localcache     *cache.Cache       // go-cache:L1,默认5s过期
 	group          singleflight.Group // 防并发
 }
 
-func NewFeedService(repo FeedRepo, videoSvc VideoProvider, ratingSvc RatingProvider, followProvider FollowProvider) *FeedService {
+func NewFeedService(repo FeedRepo, videoSvc VideoProvider, ratingSvc RatingProvider, followProvider FollowProvider, viewbuilder videsvc.ViewBuilder) *FeedService {
 	return &FeedService{
 		repo:           repo,
 		videoSvc:       videoSvc,
 		localcache:     cache.New(l1CacheTTL, 10*time.Second),
 		ratingSvc:      ratingSvc,
 		followProvider: followProvider,
+		viewBuilder:    viewbuilder,
 	}
 }
 
@@ -217,17 +219,21 @@ func (s *FeedService) ListFeed(ctx context.Context, accountID uint, cursorStr st
 	}
 
 	// sign url
-	videoViews, err := s.videoSvc.BuildViews(ctx, entities)
-	if err != nil {
-		return nil, apperrors.NewAppError(http.StatusInternalServerError, "get videos failed")
+	viewResult := s.viewBuilder.BuildSome(ctx, entities)
+	for _, failure := range viewResult.Failures {
+		log.Printf("视频展示失败：video_id = %d,err = %v", failure.VideoID, failure.Err)
+	}
+
+	if len(viewResult.Items) == 0 && len(viewResult.Failures) > 0 {
+		return nil, apperrors.NewAppError(http.StatusInternalServerError, "视频暂时无法展示")
 	}
 
 	// 获取用户对视频的评价信息
-	if _, err = s.stampStatus(ctx, accountID, videoViews); err != nil {
+	if _, err = s.stampStatus(ctx, accountID, viewResult.Items); err != nil {
 		log.Printf("failed to stamp views: %v", err)
 	}
 
-	return &FeedListResult{Items: videoViews, NextCursor: next}, nil
+	return &FeedListResult{Items: viewResult.Items, NextCursor: next}, nil
 }
 
 // GetVideoByIDs 查找视频实体数据
@@ -344,12 +350,17 @@ func (s *FeedService) listLatestFromDB(ctx context.Context, account uint, cursor
 	if len(vs) > limit {
 		vs = vs[:limit]
 	}
-	views, err := s.videoSvc.BuildViews(ctx, vs)
-	if err != nil {
-		return nil, err
+
+	viewResult := s.viewBuilder.BuildSome(ctx, vs)
+	for _, failure := range viewResult.Failures {
+		log.Printf("视频展示失败：video_id = %d,err = %v", failure.VideoID, failure.Err)
 	}
 
-	if _, err := s.stampStatus(ctx, account, views); err != nil {
+	if len(viewResult.Items) == 0 && len(viewResult.Failures) > 0 {
+		return nil, apperrors.NewAppError(http.StatusInternalServerError, "视频暂时无法展示")
+	}
+
+	if _, err := s.stampStatus(ctx, account, viewResult.Items); err != nil {
 		log.Printf("failed to stamp views: %v", err)
 	}
 
@@ -372,7 +383,7 @@ func (s *FeedService) listLatestFromDB(ctx context.Context, account uint, cursor
 
 	// 返回可播放信息
 	return &FeedListResult{
-		Items:      views,
+		Items:      viewResult.Items,
 		NextCursor: nextCursor,
 	}, nil
 }
@@ -443,9 +454,13 @@ func (s *FeedService) ListByTag(ctx context.Context, accountID uint, tagName, cu
 	}
 
 	// 签名video，获取可播放url
-	views, err := s.videoSvc.BuildViews(ctx, videos)
-	if err != nil {
-		return nil, err
+	viewResult := s.viewBuilder.BuildSome(ctx, videos)
+	for _, failure := range viewResult.Failures {
+		log.Printf("视频展示失败：video_id = %d,err = %v", failure.VideoID, failure.Err)
+	}
+
+	if len(viewResult.Items) == 0 && len(viewResult.Failures) > 0 {
+		return nil, apperrors.NewAppError(http.StatusInternalServerError, "视频暂时无法展示")
 	}
 
 	// next
@@ -459,12 +474,12 @@ func (s *FeedService) ListByTag(ctx context.Context, accountID uint, tagName, cu
 		next = video.EncodeCursor(cur)
 	}
 
-	if _, err := s.stampStatus(ctx, accountID, views); err != nil {
+	if _, err := s.stampStatus(ctx, accountID, viewResult.Items); err != nil {
 		log.Printf("fail to get user's rating status,err:%v", err)
 	}
 
 	return &FeedListResult{
-		Items:      views,
+		Items:      viewResult.Items,
 		NextCursor: next,
 	}, nil
 }
@@ -564,13 +579,18 @@ func (s *FeedService) ListByPopularity(ctx context.Context, accountID uint, asof
 	}
 
 	// 签发数据
-	views, err := s.videoSvc.BuildViews(ctx, vs)
-	if err != nil {
-		return nil, apperrors.NewAppError(http.StatusInternalServerError, "视频数据获取失败")
+	viewResult := s.viewBuilder.BuildSome(ctx, vs)
+	for _, failure := range viewResult.Failures {
+		log.Printf("视频展示失败：video_id = %d,err = %v", failure.VideoID, failure.Err)
 	}
+
+	if len(viewResult.Items) == 0 && len(viewResult.Failures) > 0 {
+		return nil, apperrors.NewAppError(http.StatusInternalServerError, "视频暂时无法展示")
+	}
+
 	// 组装数据并返回，data ,as_of,offset,limit
 	return &PopularityResult{
-		Items:   views,
+		Items:   viewResult.Items,
 		AsOf:    now.Unix(),
 		Offset:  offset + int64(limit),
 		HasMore: hasmore,
@@ -683,17 +703,21 @@ func (s *FeedService) ListByFollowing(ctx context.Context, accountID uint, curso
 	}
 
 	// 数据查询结束，sign url 获取可播放资源
-	views, err := s.videoSvc.BuildViews(ctx, entities)
-	if err != nil {
-		return nil, apperrors.NewAppError(http.StatusInternalServerError, "播放视频失败")
+	viewResult := s.viewBuilder.BuildSome(ctx, entities)
+	for _, failure := range viewResult.Failures {
+		log.Printf("视频展示失败：video_id = %d,err = %v", failure.VideoID, failure.Err)
+	}
+
+	if len(viewResult.Items) == 0 && len(viewResult.Failures) > 0 {
+		return nil, apperrors.NewAppError(http.StatusInternalServerError, "视频暂时无法展示")
 	}
 
 	// 获取用户对视频的评价信息
-	if _, err = s.stampStatus(ctx, accountID, views); err != nil {
+	if _, err = s.stampStatus(ctx, accountID, viewResult.Items); err != nil {
 		log.Printf("failed to stamp views: %v", err)
 	}
 
-	return &FeedListResult{Items: views, NextCursor: next}, nil
+	return &FeedListResult{Items: viewResult.Items, NextCursor: next}, nil
 }
 
 // listFollowingFromDB 直接DB查询关注作者的视频
@@ -730,12 +754,16 @@ func (s *FeedService) listFollowingFromDB(ctx context.Context, accountID uint, c
 	}
 
 	// 签发可播放的视频信息
-	views, err := s.videoSvc.BuildViews(ctx, vs)
-	if err != nil {
-		return nil, apperrors.NewAppError(http.StatusInternalServerError, "视频播放失败")
+	viewResult := s.viewBuilder.BuildSome(ctx, vs)
+	for _, failure := range viewResult.Failures {
+		log.Printf("视频展示失败：video_id = %d,err = %v", failure.VideoID, failure.Err)
 	}
 
-	return &FeedListResult{Items: views, NextCursor: next}, nil
+	if len(viewResult.Items) == 0 && len(viewResult.Failures) > 0 {
+		return nil, apperrors.NewAppError(http.StatusInternalServerError, "视频暂时无法展示")
+	}
+
+	return &FeedListResult{Items: viewResult.Items, NextCursor: next}, nil
 }
 
 // ensureFollowingTimeLine 判断是否存在，不存在懒记载用户关注视频流
@@ -821,6 +849,6 @@ func (s *FeedService) BackfillFollowing(ctx context.Context, fanID, vloggerID ui
 }
 
 // ClearFollowingTimeline 取关时清空用户关注流时间线
-func (s *FeedService) ClearFollowingTimeline(ctx context.Context,fanID uint) error {
-	return s.repo.Del(ctx,s.repo.Key("feed:following:%d",fanID))
+func (s *FeedService) ClearFollowingTimeline(ctx context.Context, fanID uint) error {
+	return s.repo.Del(ctx, s.repo.Key("feed:following:%d", fanID))
 }

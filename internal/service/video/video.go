@@ -66,6 +66,11 @@ type EntityCache interface {
 	Unlock(ctx context.Context, key string, token string) error
 }
 
+type ViewBuilder interface {
+	BuildSome(ctx context.Context, videos []video.Video) ViewBuildResult
+	BuildOne(ctx context.Context, video video.Video) (video.VideoView, error)
+}
+
 const entityCacheTTL = time.Hour
 
 // VideoRepo 组合接口：service 依赖它一个即可
@@ -79,10 +84,11 @@ type VideoService struct {
 	cache       ChunkCache
 	videoCache  VideoCacheCleaner //仅视频缓存清理
 	entityCache EntityCache       // 视频缓存操作
+	viewBuilder ViewBuilder       //获取视频播放链接
 }
 
-func NewVideoService(repo VideoRepo, cache ChunkCache, videoCache VideoCacheCleaner, entityCache EntityCache) *VideoService {
-	return &VideoService{repo: repo, cache: cache, videoCache: videoCache, entityCache: entityCache}
+func NewVideoService(repo VideoRepo, cache ChunkCache, videoCache VideoCacheCleaner, entityCache EntityCache, viewbuilder ViewBuilder) *VideoService {
+	return &VideoService{repo: repo, cache: cache, videoCache: videoCache, entityCache: entityCache, viewBuilder: viewbuilder}
 }
 
 type ChunkCache interface {
@@ -296,34 +302,6 @@ func (s *VideoService) UploadCover(ctx context.Context, authorID uint, filename 
 	return objectKey, url, nil
 }
 
-// 抽公共方法（GetVideo 也改用它）
-func (s *VideoService) videoView(ctx context.Context, v *video.Video) (*video.VideoView, error) {
-	play, err := s.repo.PresignedGetObject(ctx, v.VideoKey, playExpiry)
-	if err != nil {
-		return nil, apperrors.NewAppError(http.StatusInternalServerError, "生成播放地址失败")
-	}
-	if v.CoverKey == "" {
-		return nil, apperrors.NewAppError(http.StatusInternalServerError, "封面数据缺失")
-	} // 强制封面
-	cover, err := s.repo.PresignedGetObject(ctx, v.CoverKey, playExpiry)
-	if err != nil {
-		return nil, apperrors.NewAppError(http.StatusInternalServerError, "生成封面地址失败")
-	}
-
-	return &video.VideoView{
-		ID:          v.ID,
-		Title:       v.Title,
-		Description: v.Description,
-		Author: video.Author{
-			ID:       v.AuthorID,
-			Username: v.Username,
-		},
-		PlayURL:   play,
-		CoverURL:  cover,
-		CreatedAt: v.CreatedAt,
-	}, nil
-}
-
 // GetVideo 根据数据库中的视频ID,返回该视频的播放信息
 // 查询缓存数据，当缓存出现问题的时候才查询数据库
 // 使用redis 分布式锁，减少DB访问量（缓存击穿）
@@ -344,7 +322,8 @@ func (s *VideoService) GetVideo(ctx context.Context, id uint) (*video.VideoView,
 			return nil, apperrors.NewAppError(http.StatusInternalServerError, "查询视频失败")
 		}
 
-		return s.videoView(ctx, v)
+		view, err := s.viewBuilder.BuildOne(ctx, *v)
+		return &view, err
 	}
 
 	// 查找缓存
@@ -355,7 +334,8 @@ func (s *VideoService) GetVideo(ctx context.Context, id uint) (*video.VideoView,
 			log.Printf("解析缓存失败 videoID=%d err=%v", id, err)
 		} else {
 			v := cached.ToVideo()
-			return s.videoView(ctx, &v)
+			view, err := s.viewBuilder.BuildOne(ctx, v)
+			return &view, err
 		}
 	}
 
@@ -388,7 +368,8 @@ func (s *VideoService) GetVideo(ctx context.Context, id uint) (*video.VideoView,
 			}
 		}
 
-		return s.videoView(ctx, v)
+		view, err := s.viewBuilder.BuildOne(ctx, *v)
+		return &view, err
 	}
 
 	// 获取锁失败，等待他人执行结束，再次查找缓存数据
@@ -401,7 +382,8 @@ func (s *VideoService) GetVideo(ctx context.Context, id uint) (*video.VideoView,
 				return nil, apperrors.NewAppError(http.StatusInternalServerError, "解析错误")
 			}
 			v := cached.ToVideo()
-			return s.videoView(ctx, &v)
+			view, err := s.viewBuilder.BuildOne(ctx, v)
+			return &view, err
 		}
 
 		if !data.IsMiss(err) { // redis 有问题，兜底查询
@@ -416,8 +398,8 @@ func (s *VideoService) GetVideo(ctx context.Context, id uint) (*video.VideoView,
 
 // ListResult 分页结果
 type ListResult struct {
-	Items      []*video.VideoView `json:"items"`
-	NextCursor string             `json:"next_cursor"` // 空串 = 没有更多
+	Items      []video.VideoView `json:"items"`
+	NextCursor string            `json:"next_cursor"` // 空串 = 没有更多
 }
 
 // ListVideos 根据用户id,分页游标，limit返回视频信息列表
@@ -460,16 +442,17 @@ func (s *VideoService) ListVideos(ctx context.Context, authorID uint, cursorStr 
 	}
 
 	// 构造videoView列表返回
-	videoViews := make([]*video.VideoView, len(v))
-	for i := range v {
-		videoViews[i], err = s.videoView(ctx, &v[i])
-		if err != nil {
-			return nil, err
-		}
+	viewResult := s.viewBuilder.BuildSome(ctx, v)
+	for _, failure := range viewResult.Failures {
+		log.Printf("视频展示失败：video_id = %d,err = %v", failure.VideoID, failure.Err)
+	}
+
+	if len(viewResult.Items) == 0 && len(viewResult.Failures) > 0 {
+		return nil, apperrors.NewAppError(http.StatusInternalServerError, "视频暂时无法展示")
 	}
 
 	return &ListResult{
-		Items:      videoViews,
+		Items:      viewResult.Items,
 		NextCursor: nextCursorStr,
 	}, nil
 }

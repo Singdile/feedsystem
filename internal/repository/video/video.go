@@ -7,9 +7,7 @@ import (
 	"feedsystem/internal/data"
 	"feedsystem/internal/model/feed"
 	"feedsystem/internal/model/video"
-	apperrors "feedsystem/internal/pkg/errors"
 	"io"
-	"net/http"
 	"time"
 
 	"github.com/minio/minio-go/v7"
@@ -295,62 +293,6 @@ func (r *videoRepo) GetVideoEntitiesByIDs(ctx context.Context, ids []uint) ([]vi
 	return videos, nil
 }
 
-// BuildViews 签发视频播放url
-func (r *videoRepo) BuildViews(ctx context.Context, vs []video.Video) ([]video.VideoView, error) {
-	ids := make([]uint, 0, len(vs))
-	for _, v := range vs {
-		ids = append(ids, v.ID)
-	}
-
-	tagsMaps, err := r.GetTagsByVideoIDs(ctx, ids)
-	if err != nil {
-		return nil, err
-	}
-
-	views := make([]video.VideoView, 0, len(vs))
-	for i := range vs {
-		v, err := r.signVideoView(ctx, &vs[i])
-		if err != nil {
-			return nil, err
-		}
-
-		v.HashTags = tagsMaps[v.ID]
-		views = append(views, *v)
-	}
-	return views, nil
-}
-
-func (r *videoRepo) signVideoView(ctx context.Context, v *video.Video) (*video.VideoView, error) {
-	play, err := r.mc.PresignedGetObject(ctx, v.VideoKey, playExpiry)
-	if err != nil {
-		return nil, apperrors.NewAppError(http.StatusInternalServerError, "生成播放地址失败")
-	}
-	if v.CoverKey == "" {
-		return nil, apperrors.NewAppError(http.StatusInternalServerError, "封面数据缺失")
-	} // 强制封面
-	cover, err := r.mc.PresignedGetObject(ctx, v.CoverKey, playExpiry)
-	if err != nil {
-		return nil, apperrors.NewAppError(http.StatusInternalServerError, "生成封面地址失败")
-	}
-
-	return &video.VideoView{
-		ID:          v.ID,
-		Title:       v.Title,
-		Description: v.Description,
-		Author: video.Author{
-			ID:       v.AuthorID,
-			Username: v.Username,
-		},
-		PlayURL:       play,
-		CoverURL:      cover,
-		CreatedAt:     v.CreatedAt,
-		LikedCount:    v.LikedCount,
-		DislikedCount: v.DislikedCount,
-		CommentCount:  v.CommentCount,
-	}, nil
-
-}
-
 func (r *videoRepo) Counts(ctx context.Context, id uint) (int64, error) {
 	var cnt int64
 	err := r.db.Model(&video.Video{}).Where("author_id = ?", id).Count(&cnt).Error
@@ -360,7 +302,7 @@ func (r *videoRepo) Counts(ctx context.Context, id uint) (int64, error) {
 
 func (r *videoRepo) GetTagsByVideoIDs(ctx context.Context, ids []uint) (map[uint][]string, error) {
 	if len(ids) == 0 {
-		return map[uint][]string{}, errors.New("参数错误，视频ids为空")
+		return map[uint][]string{}, nil
 	}
 
 	// select video_tags.video_id,tags.name from video_ids join tags on video_ids.tag_id = tags.id where video_ids.video_id = ?

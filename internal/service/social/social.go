@@ -111,8 +111,8 @@ func (s *SocialService) UnFollow(ctx context.Context, fanID, vloggerID uint) err
 	}
 
 	if s.backfiller != nil {
-		if err := s.backfiller.ClearFollowingTimeline(ctx,fanID); err != nil {
-			log.Printf("关注流清楚失败，fan = %d: %v",fanID,err)
+		if err := s.backfiller.ClearFollowingTimeline(ctx, fanID); err != nil {
+			log.Printf("关注流清楚失败，fan = %d: %v", fanID, err)
 		}
 	}
 
