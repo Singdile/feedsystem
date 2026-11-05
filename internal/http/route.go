@@ -105,6 +105,7 @@ func SetRouter(app *App) *gin.Engine {
 	r.GET("/api/v1/feed/tag", authmiddle.OptionalAuthMiddleWare(app.Cache), feedHandler.ListByTag)
 	r.GET("/api/v1/feed/popular", authmiddle.OptionalAuthMiddleWare(app.Cache), feedHandler.ListPopular)
 	r.GET("/api/v1/feed/following", authmiddle.JWTAuthMiddleWare(app.Cache), feedHandler.ListFollowing)
+	r.GET("/api/v1/videos", authmiddle.OptionalAuthMiddleWare(app.Cache), feedHandler.ListByAuthor)
 	// rating video
 	ratingG := r.Group("/api/v1/videos", authmiddle.JWTAuthMiddleWare(app.Cache))
 	{

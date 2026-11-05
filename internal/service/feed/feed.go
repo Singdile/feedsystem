@@ -706,3 +706,65 @@ func (s *FeedService) ensureFollowingTimeLine(ctx context.Context, accountID uin
 	return s.repo.Expire(ctx, key, 7*24*time.Hour)
 }
 
+// ListByAuthor 作者作品流（authorID == 0 表示全站），按发布时间倒序 + 游标分页
+func (s *FeedService) ListByAuthor(ctx context.Context, accountID, authorID uint, cursorStr string, limit int) (*FeedListResult, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	// 解析游标
+	var cursor *video.Cursor
+	if cursorStr != "" {
+		cur, err := video.DecodeCursor(cursorStr)
+		if err != nil {
+			return nil, apperrors.NewAppError(http.StatusBadRequest, "bad_cursor")
+		}
+		cursor = &cur
+	}
+
+	// 列表查询（DB 完整实体）：authorID > 0 按作者，== 0 全站
+	var videos []video.Video
+	var err error
+	if authorID > 0 {
+		videos, err = s.repo.ListLatestByAuthors(ctx, []uint{authorID}, cursor, limit+1)
+	} else {
+		videos, err = s.repo.ListLatest(ctx, cursor, limit+1)
+	}
+	if err != nil {
+		return nil, apperrors.NewAppError(http.StatusInternalServerError, "查询失败")
+	}
+
+	hasMore := len(videos) > limit
+	if hasMore {
+		videos = videos[:limit]
+	}
+
+	// 签发播放/封面地址（部分失败容错）
+	viewResult := s.viewBuilder.BuildSome(ctx, videos)
+	for _, failure := range viewResult.Failures {
+		log.Printf("视频展示失败：video_id = %d,err = %v", failure.VideoID, failure.Err)
+	}
+	if len(viewResult.Items) == 0 && len(viewResult.Failures) > 0 {
+		return nil, apperrors.NewAppError(http.StatusInternalServerError, "视频暂时无法展示")
+	}
+
+	// 点赞状态（匿名 accountID=0 时内部自动跳过）
+	if _, err = s.stampStatus(ctx, accountID, viewResult.Items); err != nil {
+		log.Printf("failed to stamp views: %v", err)
+	}
+
+	// 游标：用 DB 查询结果的最后一条（不是 Items，避免签发失败跳过导致游标偏移）
+	next := ""
+	if hasMore && len(videos) > 0 {
+		last := videos[len(videos)-1]
+		next = video.EncodeCursor(video.Cursor{
+			CreatedAt: last.CreatedAt,
+			ID:        last.ID,
+		})
+	}
+
+	return &FeedListResult{Items: viewResult.Items, NextCursor: next}, nil
+}

@@ -147,3 +147,23 @@ func currentAccountID(c *gin.Context) (uint, bool) {
 	return id, ok
 }
 
+// ListByAuthor 作者作品列表（author_id=0 全站）
+// GET /api/v1/videos?author_id=&cursor=&limit=
+func (h *Handler) ListByAuthor(c *gin.Context) {
+	authorID, _ := strconv.ParseUint(c.Query("author_id"), 10, 64)
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	cursor := c.Query("cursor")
+	if limit < 0 {
+		response.Fail(c, http.StatusBadRequest, "参数错误")
+		return
+	}
+
+	accountID, _ := currentAccountID(c) // OptionalAuth：匿名时 accountID = 0
+
+	res, err := h.svc.ListByAuthor(c.Request.Context(), accountID, uint(authorID), cursor, limit)
+	if err != nil {
+		response.FromError(c, err)
+		return
+	}
+	response.OK(c, res)
+}
