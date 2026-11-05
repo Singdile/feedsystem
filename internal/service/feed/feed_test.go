@@ -2,7 +2,6 @@ package feed
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"feedsystem/internal/config"
 	"feedsystem/internal/data"
@@ -88,6 +87,29 @@ type MockVideoProvider struct {
 	mock.Mock
 }
 
+// MockVideoReader 视频实体读取（关注流/Feed 使用，字段版：按 ids 返回 Videos 中的匹配项）
+type MockVideoReader struct {
+	Videos []video.Video
+	Err    error
+}
+
+func (m *MockVideoReader) GetByIDs(ctx context.Context, ids []uint) ([]video.Video, error) {
+	if m.Err != nil {
+		return nil, m.Err
+	}
+	byID := make(map[uint]video.Video, len(m.Videos))
+	for _, v := range m.Videos {
+		byID[v.ID] = v
+	}
+	out := make([]video.Video, 0, len(ids))
+	for _, id := range ids {
+		if v, ok := byID[id]; ok {
+			out = append(out, v)
+		}
+	}
+	return out, nil
+}
+
 func (m *MockVideoProvider) ListByTag(ctx context.Context, tagName string, cursor *video.Cursor, limit int) ([]video.Video, error) {
 	args := m.Called(ctx, tagName, cursor, limit)
 	return args.Get(0).([]video.Video), args.Error(1)
@@ -164,7 +186,7 @@ func TestListFeed_EmptyCacheANDDB(t *testing.T) {
 	repo.On("ListLatest", mock.Anything, mock.Anything, 1000).Return([]video.Video{}, nil)
 
 	// 执行
-	svc := NewFeedService(repo, videoProvider, ratingProvider, nil, viewBuilder)
+	svc := NewFeedService(repo, &MockVideoReader{}, videoProvider, ratingProvider, nil, viewBuilder)
 	res, err := svc.ListFeed(context.Background(), 0, "", 10)
 
 	// 断言 参数匹配的特定函数被执行过了
@@ -202,7 +224,7 @@ func TestListFeed_DBFallback(t *testing.T) {
 	repo.On("ListLatest", mock.Anything, mock.Anything, 11).Return(dbVideos, nil)
 	viewBuilder.On("BuildSome", mock.Anything, dbVideos).Return(videosvc.ViewBuildResult{Items: dbViews})
 	// 执行
-	svc := NewFeedService(repo, videoProvider, ratingProvider, nil, viewBuilder)
+	svc := NewFeedService(repo, &MockVideoReader{Videos: dbVideos}, videoProvider, ratingProvider, nil, viewBuilder)
 	res, err := svc.ListFeed(context.Background(), 0, "", 10)
 
 	// 断言
@@ -230,14 +252,12 @@ func TestListFeed_Rebuild(t *testing.T) {
 	repo.On("ListLatest", mock.Anything, mock.Anything, 1000).Return([]video.Video{v1, v2}, nil).Once()
 
 	// 重建后递归热路径：per-id L3 水合 + BuildSome
-	videoProvider.On("GetVideoEntitiesByIDs", mock.Anything, []uint{2}).Return([]video.Video{v2}, nil).Once()
-	videoProvider.On("GetVideoEntitiesByIDs", mock.Anything, []uint{1}).Return([]video.Video{v1}, nil).Once()
 	viewBuilder.On("BuildSome", mock.Anything, mock.Anything).Return(videosvc.ViewBuildResult{Items: []video.VideoView{
 		{ID: 2, Title: "V2", CreatedAt: v2.CreatedAt},
 		{ID: 1, Title: "V1", CreatedAt: v1.CreatedAt},
 	}}).Once()
 
-	svc := NewFeedService(repo, videoProvider, ratingProvider, nil, viewBuilder)
+	svc := NewFeedService(repo, &MockVideoReader{Videos: []video.Video{v1, v2}}, videoProvider, ratingProvider, nil, viewBuilder)
 	res, err := svc.ListFeed(ctx, 0, "", 2)
 
 	require.NoError(t, err)
@@ -262,8 +282,6 @@ func TestListFeed_CursorInHotPath(t *testing.T) {
 	viewBuilder := newMockViewBuilder(t)
 	ratingProvider := &MockRatingProvider{}
 
-	svc := NewFeedService(repo, videoProvider, ratingProvider, nil, viewBuilder)
-
 	// 准备缓存数据
 	dbVideos := []video.Video{
 		{ID: 1, Title: "V1", CreatedAt: time.Now().Add(-3 * time.Second).Truncate(time.Millisecond)},
@@ -276,6 +294,8 @@ func TestListFeed_CursorInHotPath(t *testing.T) {
 		{ID: 3, Title: "V3", CreatedAt: dbVideos[2].CreatedAt},
 	}
 
+
+	svc := NewFeedService(repo, &MockVideoReader{Videos: dbVideos}, videoProvider, ratingProvider, nil, viewBuilder)
 	arr := []feed.ZMember{
 		{
 			Score:  float64(dbVideos[0].CreatedAt.UnixMilli()),
@@ -297,9 +317,7 @@ func TestListFeed_CursorInHotPath(t *testing.T) {
 	}
 
 	// 规划行为
-	videoProvider.On("GetVideoEntitiesByIDs", mock.Anything, []uint{3}).Return(dbVideos[2:], nil).Once()
 	viewBuilder.On("BuildSome", mock.Anything, dbVideos[2:]).Return(videosvc.ViewBuildResult{Items: dbViews[2:]}).Once()
-	videoProvider.On("GetVideoEntitiesByIDs", mock.Anything, []uint{2}).Return(dbVideos[1:2], nil).Once()
 	viewBuilder.On("BuildSome", mock.Anything, dbVideos[1:2]).Return(videosvc.ViewBuildResult{Items: dbViews[1:2]}).Once()
 
 	res, err := svc.ListFeed(context.Background(), 0, "", 1)
@@ -355,10 +373,9 @@ func TestListFeed_CursorINColdPath(t *testing.T) {
 	})
 
 	// Page1（热路径）：video3 走 L3 水合 + BuildSome
-	videoProvider.On("GetVideoEntitiesByIDs", mock.Anything, []uint{3}).Return(dbVideos[2:3], nil).Once()
 	viewBuilder.On("BuildSome", mock.Anything, dbVideos[2:3]).Return(videosvc.ViewBuildResult{Items: dbViews[2:3]}).Once()
 
-	svc := NewFeedService(repo, videoProvider, ratingProvider, nil, viewBuilder)
+	svc := NewFeedService(repo, &MockVideoReader{Videos: dbVideos}, videoProvider, ratingProvider, nil, viewBuilder)
 
 	// Page1：热区命中，返回 video3 + next_cursor
 	next1 := video.EncodeCursor(video.Cursor{CreatedAt: dbVideos[2].CreatedAt, ID: 3})
@@ -426,7 +443,6 @@ func TestListFeed_HotAndColdPath(t *testing.T) {
 	})
 
 	// 一次查询2条记录，热区有会命中一条数据，然后发现热区数据不够，需要从冷区数据补充
-	videoProvider.On("GetVideoEntitiesByIDs", mock.Anything, []uint{3}).Return(dbVideos[2:3], nil).Once()
 	repo.On("ListLatest", mock.Anything, &video.Cursor{
 		CreatedAt: dbVideos[2].CreatedAt,
 		ID:        3,
@@ -444,7 +460,7 @@ func TestListFeed_HotAndColdPath(t *testing.T) {
 	}
 	viewBuilder.On("BuildSome", mock.Anything, videos[0:2]).Return(videosvc.ViewBuildResult{Items: views[0:2]}).Once()
 
-	svc := NewFeedService(repo, videoProvider, ratingProvider, nil, viewBuilder)
+	svc := NewFeedService(repo, &MockVideoReader{Videos: dbVideos}, videoProvider, ratingProvider, nil, viewBuilder)
 	res, err := svc.ListFeed(ctx, 0, "", 2)
 	require.NoError(t, err)
 	require.Len(t, res.Items, 2)
@@ -458,80 +474,6 @@ func TestListFeed_HotAndColdPath(t *testing.T) {
 	videoProvider.AssertExpectations(t)
 }
 
-// TestGetVideoByIDs_L1Cache 测试三层缓存中的L1
-func TestGetVideoByIDs_L1Cache(t *testing.T) {
-	cache, _ := newTestCache(t)
-	repo := &MockFeedRepo{cache: cache}
-	videoProvider := &MockVideoProvider{}
-	viewBuilder := newMockViewBuilder(t)
-	ratingProvider := &MockRatingProvider{}
-	svc := NewFeedService(repo, videoProvider, ratingProvider, nil, viewBuilder)
-	ctx := context.Background()
-
-	// 预置 L1 本地缓存（进程内 go-cache）
-	v1 := video.Video{ID: 1, Title: "V1", VideoKey: "videos/1/1.mp4", CoverKey: "covers/1/1.png"}
-	svc.localcache.Set(cache.Key("video:entity:1"), v1, l1CacheTTL)
-
-	// 执行：应 L1 命中，不碰 L2/L3（若碰 L3，未 mock 的 GetVideoEntitiesByIDs 会 panic）
-	res, err := svc.GetVideoByIDs(ctx, []uint{1})
-	require.NoError(t, err)
-	require.Len(t, res, 1)
-	require.Equal(t, uint(1), res[0].ID)
-	require.Equal(t, "V1", res[0].Title)
-	require.Equal(t, v1.VideoKey, res[0].VideoKey)
-}
-
-// TestGetVideoByIDs_L2Redis 测试三层缓存中的L2
-func TestGetVideoByIDs_L2Redis(t *testing.T) {
-	cache, _ := newTestCache(t)
-	repo := &MockFeedRepo{cache: cache}
-	videoProvider := &MockVideoProvider{}
-	viewBuilder := newMockViewBuilder(t)
-	ratingProvider := &MockRatingProvider{}
-	svc := NewFeedService(repo, videoProvider, ratingProvider, nil, viewBuilder)
-	ctx := context.Background()
-
-	// 预置 L2 实体缓存（Redis，DTO 序列化）
-	v1 := video.Video{ID: 1, Title: "V1", VideoKey: "videos/1/1.mp4", CoverKey: "covers/1/1.png"}
-	b, _ := json.Marshal(v1.ToVideoEntityCache())
-	cache.SetBytes(ctx, cache.Key("video:entity:1"), b, time.Hour)
-
-	// 执行：L1 miss → L2 命中（不调 L3）
-	res, err := svc.GetVideoByIDs(ctx, []uint{1})
-	require.NoError(t, err)
-	require.Len(t, res, 1)
-	require.Equal(t, uint(1), res[0].ID)
-	require.Equal(t, "V1", res[0].Title)
-	require.Equal(t, v1.VideoKey, res[0].VideoKey) // 反序列化后带内部 key
-}
-
-// TestGetVideoByIDs_L3DB 测试三层缓存中的L3
-func TestGetVideoByIDs_L3DB(t *testing.T) {
-	cache, _ := newTestCache(t)
-	repo := &MockFeedRepo{cache: cache}
-	videoProvider := &MockVideoProvider{}
-	viewBuilder := newMockViewBuilder(t)
-	ratingProvider := &MockRatingProvider{}
-	svc := NewFeedService(repo, videoProvider, ratingProvider, nil, viewBuilder)
-	ctx := context.Background()
-
-	v1 := video.Video{ID: 1, Title: "V1", VideoKey: "videos/1/1.mp4", CoverKey: "covers/1/1.png"}
-	videoProvider.On("GetVideoEntitiesByIDs", mock.Anything, []uint{1}).Return([]video.Video{v1}, nil).Once()
-
-	// 执行：L1/L2 miss → L3 回源 + 回填 L2
-	res, err := svc.GetVideoByIDs(ctx, []uint{1})
-	require.NoError(t, err)
-	require.Len(t, res, 1)
-	require.Equal(t, uint(1), res[0].ID)
-
-	// L3 查完回填 L2
-	b, err := cache.GetBytes(ctx, cache.Key("video:entity:1"))
-	require.NoError(t, err)
-	require.NotEmpty(t, b)
-
-	videoProvider.AssertExpectations(t)
-}
-
 // TestListByTag 测试功能是否实现了
 func TestListByTag(t *testing.T) {
 	cache, _ := newTestCache(t)
@@ -539,7 +481,6 @@ func TestListByTag(t *testing.T) {
 	videoProvider := &MockVideoProvider{}
 	viewBuilder := newMockViewBuilder(t)
 	ratingProvider := &MockRatingProvider{}
-	svc := NewFeedService(repo, videoProvider, ratingProvider, nil, viewBuilder)
 	ctx := context.Background()
 
 	dbVideos := []video.Video{
@@ -551,6 +492,7 @@ func TestListByTag(t *testing.T) {
 		{ID: 2, Title: "V2", CreatedAt: dbVideos[1].CreatedAt},
 	}
 
+	svc := NewFeedService(repo, &MockVideoReader{Videos: dbVideos}, videoProvider, ratingProvider, nil, viewBuilder)
 	// FeedService.ListByTag：limit+1=3 探测 → 返回 2 条 → hasMore=false → next=""
 	videoProvider.On("ListByTag", mock.Anything, "学习", mock.Anything, 3).Return(dbVideos, nil).Once()
 	viewBuilder.On("BuildSome", mock.Anything, mock.Anything).Return(videosvc.ViewBuildResult{Items: dbViews}).Once()
@@ -640,7 +582,7 @@ func TestListFeed_DeletedVideo(t *testing.T) {
 	videoProvider := &MockVideoProvider{}
 	viewBuilder := newMockViewBuilder(t)
 	ratingProvider := &MockRatingProvider{}
-	svc := NewFeedService(repo, videoProvider, ratingProvider, nil, viewBuilder)
+	svc := NewFeedService(repo, &MockVideoReader{}, videoProvider, ratingProvider, nil, viewBuilder)
 	ctx := context.Background()
 
 	// 准备zset数据
@@ -655,7 +597,6 @@ func TestListFeed_DeletedVideo(t *testing.T) {
 	}) // 最新的
 
 	// 选中热区数据三层查询之后为空
-	videoProvider.On("GetVideoEntitiesByIDs", mock.Anything, mock.Anything).Return([]video.Video{}, nil)
 	// 转到直接查询数据库
 	repo.On("ListLatest", mock.Anything, mock.Anything, mock.Anything).Return([]video.Video{
 		{
@@ -701,7 +642,6 @@ func TestFeedViewBuilderResults(t *testing.T) {
 					provider.AssertExpectations(t)
 					follows.AssertExpectations(t)
 				})
-				svc := NewFeedService(repo, provider, ratings, follows, builder)
 
 				base := time.Now().UTC().Truncate(time.Second).Add(-time.Minute)
 				videos := []video.Video{
@@ -713,6 +653,7 @@ func TestFeedViewBuilderResults(t *testing.T) {
 					{ID: 3, Title: "newest", CreatedAt: videos[0].CreatedAt, HashTags: []string{"旅行"}},
 					{ID: 2, Title: "page tail", CreatedAt: videos[1].CreatedAt},
 				}
+				svc := NewFeedService(repo, &MockVideoReader{Videos: videos}, provider, ratings, follows, builder)
 				buildResult := videosvc.ViewBuildResult{Items: views}
 				signErr := errors.New("signing failed")
 				switch outcome {
@@ -854,7 +795,7 @@ func TestFeedViewBuilderEmptyResults(t *testing.T) {
 			provider := &MockVideoProvider{}
 			builder := newMockViewBuilder(t)
 			follows := &MockFollowProvider{}
-			svc := NewFeedService(repo, provider, &MockRatingProvider{}, follows, builder)
+			svc := NewFeedService(repo, &MockVideoReader{}, provider, &MockRatingProvider{}, follows, builder)
 			var res *FeedListResult
 			var err error
 			switch path {
@@ -921,7 +862,7 @@ func TestListByTag_RealBuilderTagFallback(t *testing.T) {
 				tags.err = errors.New("tag database unavailable")
 			}
 			builder := videosvc.NewVideoViewBuilder(testURLSigner{}, tags)
-			svc := NewFeedService(repo, provider, &MockRatingProvider{}, nil, builder)
+			svc := NewFeedService(repo, &MockVideoReader{Videos: videos}, provider, &MockRatingProvider{}, nil, builder)
 
 			res, err := svc.ListByTag(t.Context(), 0, "旅行", "", 2)
 
@@ -993,7 +934,7 @@ func TestListByTag_RatingFailureKeepsVideosAndCursor(t *testing.T) {
 	builder.On("BuildSome", t.Context(), videos[:2]).Return(videosvc.ViewBuildResult{Items: views}).Once()
 	ratings.On("GetUserRatings", t.Context(), uint(7), []uint{30, 10}).
 		Return(nil, errors.New("rating service unavailable")).Once()
-	svc := NewFeedService(nil, provider, ratings, nil, builder)
+	svc := NewFeedService(nil, &MockVideoReader{Videos: videos}, provider, ratings, nil, builder)
 
 	res, err := svc.ListByTag(t.Context(), 7, "旅行", "", 2)
 

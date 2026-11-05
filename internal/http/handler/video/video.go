@@ -13,11 +13,12 @@ import (
 )
 
 type Handler struct {
-	svc *videosvc.VideoService
+	svc      *videosvc.VideoService      //负责视频上传/删除
+	querySvc *videosvc.VideoQueryService //负责查询
 }
 
-func NewHandler(svc *videosvc.VideoService) *Handler {
-	return &Handler{svc: svc}
+func NewHandler(svc *videosvc.VideoService, querySvc *videosvc.VideoQueryService) *Handler {
+	return &Handler{svc: svc, querySvc: querySvc}
 }
 
 // Init 视频上传登记，获取uploadID，以及分片上传urls
@@ -266,32 +267,12 @@ func (h *Handler) GetVideo(c *gin.Context) {
 		response.Fail(c, http.StatusBadRequest, "参数错误")
 		return
 	}
-	view, err := h.svc.GetVideo(c.Request.Context(), uint(id))
+	view, err := h.querySvc.GetByID(c.Request.Context(), uint(id))
 	if err != nil {
 		response.FromError(c, err)
 		return
 	}
 	response.OK(c, view)
-}
-
-// ListVideos 按照时间倒序展示用户视频,采用游标分页
-// 参数： 查询的用户id,分页游标cursor_str,显示个数limit
-// 返回： 返回一组视频可播放信息
-func (h *Handler) ListVideos(c *gin.Context) {
-	authorID, _ := strconv.ParseUint(c.Query("author_id"), 10, 64) // 0=全站
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
-	cursor := c.Query("cursor")
-	if limit < 0 {
-		response.Fail(c, 400, "参数错误")
-		return
-	}
-
-	res, err := h.svc.ListVideos(c.Request.Context(), uint(authorID), cursor, limit)
-	if err != nil {
-		response.FromError(c, err)
-		return
-	}
-	response.OK(c, res)
 }
 
 // DeleteVideo 用户指定删除自己的视频

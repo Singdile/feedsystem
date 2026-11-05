@@ -146,3 +146,4 @@ func currentAccountID(c *gin.Context) (uint, bool) {
 	id, ok := v.(uint)
 	return id, ok
 }
+

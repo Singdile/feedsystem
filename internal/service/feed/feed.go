@@ -8,7 +8,6 @@ import (
 	"feedsystem/internal/model/video"
 	apperrors "feedsystem/internal/pkg/errors"
 	videsvc "feedsystem/internal/service/video"
-	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -63,8 +62,13 @@ type FollowProvider interface {
 	ListFollowingIDs(ctx context.Context, fanID uint) ([]uint, error)
 }
 
+type VideoReader interface {
+	GetByIDs(ctx context.Context, ids []uint) ([]video.Video, error)
+}
+
 type FeedService struct {
 	repo           FeedRepo
+	videoReader    VideoReader
 	videoSvc       VideoProvider
 	ratingSvc      RatingProvider
 	followProvider FollowProvider
@@ -73,9 +77,10 @@ type FeedService struct {
 	group          singleflight.Group // 防并发
 }
 
-func NewFeedService(repo FeedRepo, videoSvc VideoProvider, ratingSvc RatingProvider, followProvider FollowProvider, viewbuilder videsvc.ViewBuilder) *FeedService {
+func NewFeedService(repo FeedRepo, videoReader VideoReader, videoSvc VideoProvider, ratingSvc RatingProvider, followProvider FollowProvider, viewbuilder videsvc.ViewBuilder) *FeedService {
 	return &FeedService{
 		repo:           repo,
+		videoReader:    videoReader,
 		videoSvc:       videoSvc,
 		localcache:     cache.New(l1CacheTTL, 10*time.Second),
 		ratingSvc:      ratingSvc,
@@ -170,7 +175,7 @@ func (s *FeedService) ListFeed(ctx context.Context, accountID uint, cursorStr st
 	}
 
 	//查找三级缓存，获取视频实体信息
-	entities, err := s.GetVideoByIDs(ctx, ids)
+	entities, err := s.videoReader.GetByIDs(ctx, ids)
 	if err != nil {
 		return nil, apperrors.NewAppError(http.StatusInternalServerError, "get video failed")
 	}
@@ -231,104 +236,6 @@ func (s *FeedService) ListFeed(ctx context.Context, accountID uint, cursorStr st
 	}
 
 	return &FeedListResult{Items: viewResult.Items, NextCursor: next}, nil
-}
-
-// GetVideoByIDs 查找视频实体数据
-// 查找三级缓存：
-// L1 : 本地go-cache （ttl 5s）
-// L2 : redis缓存 （ttl 1h）
-// L3 : mysql (采用singleflight,压缩操作次数)
-func (s *FeedService) GetVideoByIDs(ctx context.Context, ids []uint) ([]video.Video, error) {
-	if len(ids) == 0 {
-		return []video.Video{}, nil
-	}
-
-	videoMap := make(map[uint]video.Video)
-
-	// L1: cache
-	missedL1 := make([]uint, 0, len(ids))
-	for _, id := range ids {
-		key := s.repo.Key("video:entity:%d", id)
-		if v, ok := s.localcache.Get(key); !ok {
-			missedL1 = append(missedL1, id)
-		} else {
-			videoMap[id] = v.(video.Video)
-		}
-	}
-
-	// L2: redis
-	keys := make([]string, 0, len(missedL1))
-	missedL2 := make([]uint, 0, len(missedL1))
-	for _, v := range missedL1 {
-		keys = append(keys, s.repo.Key("video:entity:%d", v))
-	}
-	res, err := s.repo.MGet(ctx, keys...)
-	if err != nil {
-		missedL2 = missedL1
-	} else {
-		for i, v := range res {
-			if v == nil { // 未命中，交给L3
-				missedL2 = append(missedL2, missedL1[i])
-				continue
-			}
-
-			str, ok := v.(string)
-			if !ok { // 类型断言失败，交给L3
-				missedL2 = append(missedL2, missedL1[i])
-				continue
-			}
-			var cached video.VideoEntityCache
-			if err := json.Unmarshal([]byte(str), &cached); err != nil {
-				missedL2 = append(missedL2, missedL1[i]) // 反序列化失败，交给L3
-				continue
-			}
-			entity := cached.ToVideo()
-			videoMap[entity.ID] = entity // L2 命中，放进结果 map，并回填至 L1
-			s.localcache.Set(keys[i], entity, l1CacheTTL)
-		}
-	}
-
-	// L3: 数据库查询
-	for _, id := range missedL2 {
-		sfKey := fmt.Sprintf("video:entity:%d", id)
-		val, err, _ := s.group.Do(sfKey, func() (any, error) {
-			vs, err := s.videoSvc.GetVideoEntitiesByIDs(ctx, []uint{id})
-			if err != nil {
-				return nil, err
-			}
-
-			if len(vs) == 0 { // id not exists
-				return nil, nil
-			}
-			return vs[0], nil
-		})
-
-		if err != nil {
-			log.Println("cannot get video entity,err:", err)
-			continue
-		}
-
-		if val == nil {
-			continue
-		}
-		entity := val.(video.Video)
-		videoMap[entity.ID] = entity
-
-		key := s.repo.Key("video:entity:%d", entity.ID)
-		cached := entity.ToVideoEntityCache()
-		if b, err := json.Marshal(cached); err == nil {
-			_ = s.repo.SetBytes(ctx, key, b, entityCacheTTL) // 回填L2
-		} // write back to L2
-		s.localcache.Set(key, entity, l1CacheTTL) // 回填L1
-	}
-
-	result := make([]video.Video, 0, len(ids))
-	for _, v := range ids {
-		if item, ok := videoMap[v]; ok {
-			result = append(result, item)
-		}
-	}
-	return result, nil
 }
 
 // listLatestFromDB DB兜底，直接从数据库中获取最新的视频信息并签发
@@ -562,7 +469,7 @@ func (s *FeedService) ListByPopularity(ctx context.Context, accountID uint, asof
 		ids = append(ids, uint(id))
 	}
 
-	vs, err := s.GetVideoByIDs(ctx, ids)
+	vs, err := s.videoReader.GetByIDs(ctx, ids)
 	if err != nil {
 		return nil, apperrors.NewAppError(http.StatusInternalServerError, "查询视频数据失败")
 	}
@@ -643,7 +550,7 @@ func (s *FeedService) ListByFollowing(ctx context.Context, accountID uint, curso
 		ids = append(ids, uint(id))
 	}
 
-	entities, err := s.GetVideoByIDs(ctx, ids)
+	entities, err := s.videoReader.GetByIDs(ctx, ids)
 	if err != nil {
 		return nil, apperrors.NewAppError(http.StatusInternalServerError, "视频查询失败")
 	}
@@ -798,3 +705,4 @@ func (s *FeedService) ensureFollowingTimeLine(ctx context.Context, accountID uin
 
 	return s.repo.Expire(ctx, key, 7*24*time.Hour)
 }
+

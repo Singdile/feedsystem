@@ -43,17 +43,19 @@ func SetRouter(app *App) *gin.Engine {
 
 	// services（依赖 repos）
 	viewBuilder := videosvc.NewVideoViewBuilder(videoRepo, videoRepo)
+	videoReader := videosvc.NewVideoReader(videoRepo, app.Cache)
 	followMaintainer := feedsvc.NewFollowingMaintainer(feedRepo)
 	videoSvc := videosvc.NewVideoService(videoRepo, app.Cache, videoCacheClean, app.Cache, viewBuilder)
+	videoQuerySvc := videosvc.NewVideoQueryService(videoReader, viewBuilder, videoRepo)
 	userSvc := usersvc.NewUserService(userRepo, app.Cache, socialRepo, videoRepo, ratingRepo)
 	ratingSvc := videosvc.NewRatingService(ratingRepo, videoRepo, mqRepo, popularityMQ, ratingRepo)
 	commentSvc := videosvc.NewCommentService(commentRepo, commentMQ, videoRepo, popularityMQ)
 	socialSvc := socialsvc.NewSocialService(socialRepo, userRepo, socialMQ, followMaintainer)
-	feedSvc := feedsvc.NewFeedService(feedRepo, videoRepo, ratingSvc, socialSvc, viewBuilder)
+	feedSvc := feedsvc.NewFeedService(feedRepo, videoReader, videoRepo, ratingSvc, socialSvc, viewBuilder)
 
 	// handlers（依赖 services）
 	userHandler := user.NewHandler(userSvc)
-	videoHandler := video.NewHandler(videoSvc)
+	videoHandler := video.NewHandler(videoSvc, videoQuerySvc)
 	feedHandler := feed.NewHandler(feedSvc)
 	ratingHandler := video.NewRatingHandler(ratingSvc)
 	commentHandler := video.NewCommentHandler(commentSvc)
@@ -96,7 +98,6 @@ func SetRouter(app *App) *gin.Engine {
 	}
 
 	r.GET("/api/v1/videos/:id", videoHandler.GetVideo)
-	r.GET("/api/v1/videos", videoHandler.ListVideos)
 	r.DELETE("/api/v1/videos/:id", authmiddle.JWTAuthMiddleWare(app.Cache), videoHandler.DeleteVideo)
 
 	// feed

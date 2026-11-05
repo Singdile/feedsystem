@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"feedsystem/internal/data"
 	"feedsystem/internal/model/video"
 	apperrors "feedsystem/internal/pkg/errors"
 	"fmt"
@@ -64,14 +63,13 @@ type EntityCache interface {
 	SetBytes(ctx context.Context, key string, val []byte, ttl time.Duration) error
 	Lock(ctx context.Context, key string, ttl time.Duration) (string, bool, error)
 	Unlock(ctx context.Context, key string, token string) error
+	MGet(ctx context.Context, keys ...string) ([]any, error)
 }
 
 type ViewBuilder interface {
 	BuildSome(ctx context.Context, videos []video.Video) ViewBuildResult
 	BuildOne(ctx context.Context, video video.Video) (video.VideoView, error)
 }
-
-const entityCacheTTL = time.Hour
 
 // VideoRepo 组合接口：service 依赖它一个即可
 type VideoRepo interface {
@@ -300,161 +298,6 @@ func (s *VideoService) UploadCover(ctx context.Context, authorID uint, filename 
 	}
 	// 返回
 	return objectKey, url, nil
-}
-
-// GetVideo 根据数据库中的视频ID,返回该视频的播放信息
-// 查询缓存数据，当缓存出现问题的时候才查询数据库
-// 使用redis 分布式锁，减少DB访问量（缓存击穿）
-func (s *VideoService) GetVideo(ctx context.Context, id uint) (*video.VideoView, error) {
-	if id == 0 {
-		return nil, apperrors.NewAppError(http.StatusBadRequest, "参数错误")
-	}
-
-	var cached video.VideoEntityCache
-	// 兜底： 查找DB
-	getFromDB := func() (*video.VideoView, error) {
-		v, err := s.repo.FindByID(ctx, id)
-
-		if err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return nil, apperrors.NewAppError(http.StatusNotFound, "视频不存在")
-			}
-			return nil, apperrors.NewAppError(http.StatusInternalServerError, "查询视频失败")
-		}
-
-		view, err := s.viewBuilder.BuildOne(ctx, *v)
-		return &view, err
-	}
-
-	// 查找缓存
-	key := s.entityCache.Key("video:entity:%d", id)
-	b, err := s.entityCache.GetBytes(ctx, key)
-	if err == nil {
-		if err := json.Unmarshal(b, &cached); err != nil {
-			log.Printf("解析缓存失败 videoID=%d err=%v", id, err)
-		} else {
-			v := cached.ToVideo()
-			view, err := s.viewBuilder.BuildOne(ctx, v)
-			return &view, err
-		}
-	}
-
-	if !data.IsMiss(err) { // redis 有问题，兜底查询
-		return getFromDB()
-	}
-
-	// 缓存未命中，尝试获取redis分布锁，执行数据库查找
-	lockKey := fmt.Sprintf("video:lock:%d", id)
-	token, ok, err := s.entityCache.Lock(ctx, lockKey, 2*time.Second)
-	if err != nil { // redis 有问题，兜底查询
-		return getFromDB()
-	}
-
-	if ok { // 获取锁成功
-		defer s.entityCache.Unlock(context.Background(), lockKey, token) // 解锁是清理操作，应该使用永不取消的ctx
-		v, err := s.repo.FindByID(ctx, id)
-
-		if err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return nil, apperrors.NewAppError(http.StatusNotFound, "视频不存在")
-			}
-			return nil, apperrors.NewAppError(http.StatusInternalServerError, "查询视频失败")
-		}
-
-		entityCache := v.ToVideoEntityCache()
-		if b, err := json.Marshal(entityCache); err == nil {
-			if err := s.entityCache.SetBytes(ctx, key, b, entityCacheTTL); err != nil { // 回写L2 redis
-				log.Printf("回填video entity 失败，videoID=%d，err=%v", id, err)
-			}
-		}
-
-		view, err := s.viewBuilder.BuildOne(ctx, *v)
-		return &view, err
-	}
-
-	// 获取锁失败，等待他人执行结束，再次查找缓存数据
-	for range 5 {
-		// 查找缓存
-		key := s.entityCache.Key("video:entity:%d", id)
-		b, err := s.entityCache.GetBytes(ctx, key)
-		if err == nil {
-			if err := json.Unmarshal(b, &cached); err != nil {
-				return nil, apperrors.NewAppError(http.StatusInternalServerError, "解析错误")
-			}
-			v := cached.ToVideo()
-			view, err := s.viewBuilder.BuildOne(ctx, v)
-			return &view, err
-		}
-
-		if !data.IsMiss(err) { // redis 有问题，兜底查询
-			return getFromDB()
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-
-	// 缓存命中还是失败，兜底直接查DB
-	return getFromDB()
-}
-
-// ListResult 分页结果
-type ListResult struct {
-	Items      []video.VideoView `json:"items"`
-	NextCursor string            `json:"next_cursor"` // 空串 = 没有更多
-}
-
-// ListVideos 根据用户id,分页游标，limit返回视频信息列表
-func (s *VideoService) ListVideos(ctx context.Context, authorID uint, cursorStr string, limit int) (*ListResult, error) {
-	if limit <= 0 {
-		limit = 20
-	}
-	if limit > 100 {
-		limit = 100
-	}
-
-	// 解析cursorStr
-	var cursor *video.Cursor
-	if cursorStr != "" {
-		c, err := video.DecodeCursor(cursorStr)
-		if err != nil {
-			return nil, apperrors.NewAppError(http.StatusBadRequest, "游标无效")
-		}
-		cursor = &c
-	}
-
-	// 调用repo
-	v, err := s.repo.List(ctx, authorID, cursor, limit+1) //多取一条，判断是否有下一页
-	if err != nil {
-		return nil, apperrors.NewAppError(http.StatusInternalServerError, "查询列表失败")
-	}
-
-	hasmore := len(v) > limit
-	if hasmore {
-		v = v[:limit]
-	}
-
-	nextCursorStr := ""
-	if len(v) > 0 && hasmore {
-		next := video.Cursor{
-			CreatedAt: v[len(v)-1].CreatedAt,
-			ID:        v[len(v)-1].ID,
-		}
-		nextCursorStr = video.EncodeCursor(next)
-	}
-
-	// 构造videoView列表返回
-	viewResult := s.viewBuilder.BuildSome(ctx, v)
-	for _, failure := range viewResult.Failures {
-		log.Printf("视频展示失败：video_id = %d,err = %v", failure.VideoID, failure.Err)
-	}
-
-	if len(viewResult.Items) == 0 && len(viewResult.Failures) > 0 {
-		return nil, apperrors.NewAppError(http.StatusInternalServerError, "视频暂时无法展示")
-	}
-
-	return &ListResult{
-		Items:      viewResult.Items,
-		NextCursor: nextCursorStr,
-	}, nil
 }
 
 func (s *VideoService) DeleteVideo(ctx context.Context, id uint, authorID uint) error {
