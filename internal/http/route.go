@@ -43,12 +43,13 @@ func SetRouter(app *App) *gin.Engine {
 
 	// services（依赖 repos）
 	viewBuilder := videosvc.NewVideoViewBuilder(videoRepo, videoRepo)
+	followMaintainer := feedsvc.NewFollowingMaintainer(feedRepo)
 	videoSvc := videosvc.NewVideoService(videoRepo, app.Cache, videoCacheClean, app.Cache, viewBuilder)
 	userSvc := usersvc.NewUserService(userRepo, app.Cache, socialRepo, videoRepo, ratingRepo)
 	ratingSvc := videosvc.NewRatingService(ratingRepo, videoRepo, mqRepo, popularityMQ, ratingRepo)
-	feedSvc := feedsvc.NewFeedService(feedRepo, videoRepo, ratingSvc, socialRepo, viewBuilder)
 	commentSvc := videosvc.NewCommentService(commentRepo, commentMQ, videoRepo, popularityMQ)
-	socialSvc := socialsvc.NewSocialService(socialRepo, userRepo, socialMQ, feedSvc)
+	socialSvc := socialsvc.NewSocialService(socialRepo, userRepo, socialMQ, followMaintainer)
+	feedSvc := feedsvc.NewFeedService(feedRepo, videoRepo, ratingSvc, socialSvc, viewBuilder)
 
 	// handlers（依赖 services）
 	userHandler := user.NewHandler(userSvc)

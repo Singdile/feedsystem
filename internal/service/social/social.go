@@ -15,6 +15,7 @@ type SocialRepo interface {
 	Delete(ctx context.Context, fanID, vloggerID uint) error
 	ListVloggerIDByFollow(ctx context.Context, fanID uint) ([]account.Profile, error)
 	ListFansByVloggerID(ctx context.Context, vloggerID uint) ([]account.Profile, error)
+	ListFollowingIDs(ctx context.Context, fanID uint) ([]uint, error)
 	IsFollowed(ctx context.Context, fanID, vloggerID uint) (bool, error)
 	Counts(ctx context.Context, accountID uint) (uint, uint, error)
 }
@@ -135,6 +136,15 @@ func (s *SocialService) GetAllVloggers(ctx context.Context, accountID uint) ([]a
 	}
 
 	return s.repo.ListVloggerIDByFollow(ctx, accountID)
+}
+
+// ListFollowingIDs 获取用户关注的所有博主的id列表
+func (s *SocialService) ListFollowingIDs(ctx context.Context, fanID uint) ([]uint, error) {
+	if fanID == 0 {
+		return []uint{}, apperrors.NewAppError(http.StatusInternalServerError, "未登录")
+	}
+
+	return s.repo.ListFollowingIDs(ctx, fanID)
 }
 
 // IsFollow 判断用户是否关注某博主

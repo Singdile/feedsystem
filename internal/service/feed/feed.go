@@ -55,7 +55,7 @@ type VideoProvider interface {
 }
 
 type RatingProvider interface {
-    GetUserRatings(ctx context.Context, accountID uint, videoID []uint) (stat map[uint]int8, err error)
+	GetUserRatings(ctx context.Context, accountID uint, videoID []uint) (stat map[uint]int8, err error)
 }
 
 // 返回关注作者列表
@@ -493,12 +493,12 @@ func (s *FeedService) stampStatus(ctx context.Context, accountID uint, views []v
 	}
 
 	// 查询rating
-	statMap,err := s.ratingSvc.GetUserRatings(ctx,accountID,ids)
+	statMap, err := s.ratingSvc.GetUserRatings(ctx, accountID, ids)
 	if err != nil {
-		return views,err
+		return views, err
 	}
 
-	for i,v := range views {
+	for i, v := range views {
 		views[i].Status = statMap[v.ID]
 	}
 	return views, nil
@@ -797,47 +797,4 @@ func (s *FeedService) ensureFollowingTimeLine(ctx context.Context, accountID uin
 	}
 
 	return s.repo.Expire(ctx, key, 7*24*time.Hour)
-}
-
-// BackfillFollowing 新关注作者之后，将其最近作品回填到用户的关注流
-// 仅在关注流已存在的时候回填（不存在则交给懒加载重建）
-func (s *FeedService) BackfillFollowing(ctx context.Context, fanID, vloggerID uint) error {
-	key := s.repo.Key("feed:following:%d", fanID)
-
-	// 判断关注流是否存在
-	exists, err := s.repo.Exists(ctx, key)
-	if err != nil {
-		return err
-	}
-
-	if !exists { //交给懒加载
-		return nil
-	}
-
-	backfilllimit := 100
-	vs, err := s.repo.ListLatestByAuthors(ctx, []uint{vloggerID}, nil, backfilllimit)
-	if err != nil {
-		return err
-	}
-
-	if len(vs) == 0 {
-		return nil
-	}
-
-	members := make([]feed.ZMember, 0, len(vs))
-	for _, v := range vs {
-		members = append(members, feed.ZMember{
-			Score:  float64(v.CreatedAt.UnixMilli()),
-			Member: strconv.FormatUint(uint64(v.ID), 10),
-		})
-	}
-	if err := s.repo.ZAddBatch(ctx, key, members); err != nil {
-		return err
-	}
-	return s.repo.Expire(ctx, key, 7*24*time.Hour) // 重置 TT
-}
-
-// ClearFollowingTimeline 取关时清空用户关注流时间线
-func (s *FeedService) ClearFollowingTimeline(ctx context.Context, fanID uint) error {
-	return s.repo.Del(ctx, s.repo.Key("feed:following:%d", fanID))
 }

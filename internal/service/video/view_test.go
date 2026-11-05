@@ -35,9 +35,9 @@ func (s *viewTestSigner) PresignedGetObject(_ context.Context, key string, expir
 
 // 标签查询mock
 type viewTestTags struct {
-	calls [][]uint //记录每次查询的视频id
+	calls [][]uint          //记录每次查询的视频id
 	tags  map[uint][]string //模拟查询结果
-	err   error // 模拟数据库故障
+	err   error             // 模拟数据库故障
 }
 
 func (g *viewTestTags) GetTagsByVideoIDs(_ context.Context, ids []uint) (map[uint][]string, error) {
