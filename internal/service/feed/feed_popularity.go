@@ -15,6 +15,7 @@ type PopularityResult struct {
 	Offset  int64             `json:"offset"`   //偏移
 	HasMore bool              `json:"has_more"` //是否还有
 }
+
 func (s *FeedService) ListByPopularity(ctx context.Context, accountID uint, asof, offset int64, limit int) (*PopularityResult, error) {
 	// 首先查看cache 里面有没有当前时间戳的60分钟快照缓存
 	now := time.Now().UTC().Truncate(time.Minute) //当前事件

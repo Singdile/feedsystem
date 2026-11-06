@@ -157,8 +157,6 @@ func (s *FeedService) buildViews(ctx context.Context, videos []video.Video) ([]v
 	return result.Items, nil
 }
 
-
-
 // stampStatus 查询用户用户对于一批视频的评价，匿名用户保持评价的默认值就行了
 func (s *FeedService) stampStatus(ctx context.Context, accountID uint, views []video.VideoView) ([]video.VideoView, error) {
 	if accountID == 0 || len(views) == 0 {
@@ -181,4 +179,3 @@ func (s *FeedService) stampStatus(ctx context.Context, accountID uint, views []v
 	}
 	return views, nil
 }
-
