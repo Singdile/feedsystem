@@ -91,7 +91,13 @@ func (s *FeedService) GlobalFeed(ctx context.Context, accountID uint, cursorStr 
 
 			remain := limit - len(vs)
 			cold, err := s.repo.ListLatest(ctx, coldCursor, remain+1)
-			if err == nil {
+			if err != nil {
+				log.Printf("全站流冷区查询失败: cursor=%+v err=%v", coldCursor, err)
+				return nil, false, apperrors.NewAppError(
+					http.StatusInternalServerError,
+					"视频暂时无法加载",
+				)
+			} else {
 				coldMore := len(cold) > remain
 				if coldMore {
 					cold = cold[:remain]

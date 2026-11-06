@@ -69,7 +69,7 @@ func (s *FeedService) ListByFollowing(ctx context.Context, accountID uint, curso
 			return nil, false, apperrors.NewAppError(http.StatusInternalServerError, "视频查询失败")
 		}
 
-		hasMore := hotMore
+		hasMore := hotMore || len(vs) == limit
 		// 判断还需不需要冷数据
 		if !hotMore && len(vs) < limit {
 			remain := limit - len(vs)

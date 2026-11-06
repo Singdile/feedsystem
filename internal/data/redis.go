@@ -114,7 +114,7 @@ func (c *RedisClient) ZRevRangeByScore(ctx context.Context, key string, maxScore
 
 		// 再次筛选，去除比游标位置更新的(score更大的，videoID更大的)
 		id, _ := strconv.ParseUint(member, 10, 64)
-		if maxScore > 0 && (score > maxScore || (maxID > 0 && uint(id) >= maxID)) {
+		if maxScore > 0 && (score == maxScore || (maxID > 0 && uint(id) >= maxID)) {
 			continue
 		}
 		out = append(out, feed.ZMember{

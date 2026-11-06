@@ -73,10 +73,13 @@ func (s *FeedService) ListByPopularity(ctx context.Context, accountID uint, asof
 	}
 
 	// 签发数据
-	items, err := s.buildViews(ctx, vs)
+	views, err := s.buildViews(ctx, vs)
 	if err != nil {
 		return nil, err
 	}
+
+	items, _ := s.stampStatus(ctx, accountID, views)
+
 	// 组装数据并返回，data ,as_of,offset,limit
 	return &PopularityResult{
 		Items:   items,

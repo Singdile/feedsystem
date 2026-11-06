@@ -15,10 +15,6 @@ func (s *FeedService) ListByTag(ctx context.Context, accountID uint, tagName, cu
 			return nil, false, apperrors.NewAppError(http.StatusBadRequest, "参数错误")
 		}
 
-		if limit <= 0 || limit > 100 {
-			limit = 20
-		}
-
 		cursor, err := decodeCursor(cursorStr)
 		if err != nil {
 			return nil, false, err

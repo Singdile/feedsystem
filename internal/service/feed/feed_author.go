@@ -10,11 +10,6 @@ import (
 // ListByAuthor 作者作品流（authorID == 0 表示全站），按发布时间倒序 + 游标分页
 func (s *FeedService) ListByAuthor(ctx context.Context, accountID, authorID uint, cursorStr string, limit int) (*FeedListResult, error) {
 	fetch := func(cursor *video.Cursor, limit int) ([]video.Video, bool, error) {
-
-		if limit <= 0 || limit >= 100 {
-			limit = 20
-		}
-
 		cursor, err := decodeCursor(cursorStr)
 		if err != nil {
 			return nil, false, err
