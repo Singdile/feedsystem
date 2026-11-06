@@ -184,10 +184,14 @@ func TestListFeed_EmptyCacheANDDB(t *testing.T) {
 	// 规定行为
 	// On 指定特定的函数，当该函数被调用且输入参数匹配的时候，则会返回Return 指定的值
 	repo.On("ListLatest", mock.Anything, mock.Anything, 1000).Return([]video.Video{}, nil)
+	// 空库时热区(哨兵)后走冷区补充，兜底 ListLatest
+	repo.On("ListLatest", mock.Anything, mock.Anything, mock.Anything).Return([]video.Video{}, nil)
+	// 空列表也会走 buildViews → BuildSome([])
+	viewBuilder.On("BuildSome", mock.Anything, mock.Anything).Return(videosvc.ViewBuildResult{Items: []video.VideoView{}})
 
 	// 执行
 	svc := NewFeedService(repo, &MockVideoReader{}, videoProvider, ratingProvider, nil, viewBuilder)
-	res, err := svc.ListFeed(context.Background(), 0, "", 10)
+	res, err := svc.GlobalFeed(context.Background(), 0, "", 10)
 
 	// 断言 参数匹配的特定函数被执行过了
 	repo.AssertExpectations(t)
@@ -225,7 +229,7 @@ func TestListFeed_DBFallback(t *testing.T) {
 	viewBuilder.On("BuildSome", mock.Anything, dbVideos).Return(videosvc.ViewBuildResult{Items: dbViews})
 	// 执行
 	svc := NewFeedService(repo, &MockVideoReader{Videos: dbVideos}, videoProvider, ratingProvider, nil, viewBuilder)
-	res, err := svc.ListFeed(context.Background(), 0, "", 10)
+	res, err := svc.GlobalFeed(context.Background(), 0, "", 10)
 
 	// 断言
 	repo.AssertExpectations(t)
@@ -258,7 +262,7 @@ func TestListFeed_Rebuild(t *testing.T) {
 	}}).Once()
 
 	svc := NewFeedService(repo, &MockVideoReader{Videos: []video.Video{v1, v2}}, videoProvider, ratingProvider, nil, viewBuilder)
-	res, err := svc.ListFeed(ctx, 0, "", 2)
+	res, err := svc.GlobalFeed(ctx, 0, "", 2)
 
 	require.NoError(t, err)
 	require.Len(t, res.Items, 2)
@@ -294,7 +298,6 @@ func TestListFeed_CursorInHotPath(t *testing.T) {
 		{ID: 3, Title: "V3", CreatedAt: dbVideos[2].CreatedAt},
 	}
 
-
 	svc := NewFeedService(repo, &MockVideoReader{Videos: dbVideos}, videoProvider, ratingProvider, nil, viewBuilder)
 	arr := []feed.ZMember{
 		{
@@ -320,7 +323,7 @@ func TestListFeed_CursorInHotPath(t *testing.T) {
 	viewBuilder.On("BuildSome", mock.Anything, dbVideos[2:]).Return(videosvc.ViewBuildResult{Items: dbViews[2:]}).Once()
 	viewBuilder.On("BuildSome", mock.Anything, dbVideos[1:2]).Return(videosvc.ViewBuildResult{Items: dbViews[1:2]}).Once()
 
-	res, err := svc.ListFeed(context.Background(), 0, "", 1)
+	res, err := svc.GlobalFeed(context.Background(), 0, "", 1)
 
 	next := video.EncodeCursor(video.Cursor{
 		CreatedAt: dbVideos[2].CreatedAt,
@@ -337,7 +340,7 @@ func TestListFeed_CursorInHotPath(t *testing.T) {
 		CreatedAt: dbVideos[1].CreatedAt,
 		ID:        2,
 	})
-	res2, err := svc.ListFeed(context.Background(), 0, res.NextCursor, 1)
+	res2, err := svc.GlobalFeed(context.Background(), 0, res.NextCursor, 1)
 	require.NoError(t, err)
 	require.Len(t, res2.Items, 1)
 	require.Equal(t, next2, res2.NextCursor)
@@ -379,7 +382,7 @@ func TestListFeed_CursorINColdPath(t *testing.T) {
 
 	// Page1：热区命中，返回 video3 + next_cursor
 	next1 := video.EncodeCursor(video.Cursor{CreatedAt: dbVideos[2].CreatedAt, ID: 3})
-	res1, err := svc.ListFeed(ctx, 0, "", 1)
+	res1, err := svc.GlobalFeed(ctx, 0, "", 1)
 	require.NoError(t, err)
 	require.Len(t, res1.Items, 1)
 	require.Equal(t, uint(3), res1.Items[0].ID)
@@ -392,7 +395,7 @@ func TestListFeed_CursorINColdPath(t *testing.T) {
 	repo.On("ListLatest", mock.Anything, &next1Cursor, 2).Return([]video.Video{dbVideos[1], dbVideos[0]}, nil).Once()
 	viewBuilder.On("BuildSome", mock.Anything, dbVideos[1:2]).Return(videosvc.ViewBuildResult{Items: dbViews[1:2]}).Once()
 
-	res2, err := svc.ListFeed(ctx, 0, res1.NextCursor, 1)
+	res2, err := svc.GlobalFeed(ctx, 0, res1.NextCursor, 1)
 	require.NoError(t, err)
 	require.Len(t, res2.Items, 1)
 	require.Equal(t, uint(2), res2.Items[0].ID)
@@ -403,7 +406,7 @@ func TestListFeed_CursorINColdPath(t *testing.T) {
 	repo.On("ListLatest", mock.Anything, &next2Cursor, 2).Return(dbVideos[0:1], nil).Once()
 	viewBuilder.On("BuildSome", mock.Anything, dbVideos[0:1]).Return(videosvc.ViewBuildResult{Items: dbViews[0:1]}).Once()
 
-	res3, err := svc.ListFeed(ctx, 0, res2.NextCursor, 1)
+	res3, err := svc.GlobalFeed(ctx, 0, res2.NextCursor, 1)
 	require.NoError(t, err)
 	require.Len(t, res3.Items, 1)
 	require.Equal(t, uint(1), res3.Items[0].ID)
@@ -461,7 +464,7 @@ func TestListFeed_HotAndColdPath(t *testing.T) {
 	viewBuilder.On("BuildSome", mock.Anything, videos[0:2]).Return(videosvc.ViewBuildResult{Items: views[0:2]}).Once()
 
 	svc := NewFeedService(repo, &MockVideoReader{Videos: dbVideos}, videoProvider, ratingProvider, nil, viewBuilder)
-	res, err := svc.ListFeed(ctx, 0, "", 2)
+	res, err := svc.GlobalFeed(ctx, 0, "", 2)
 	require.NoError(t, err)
 	require.Len(t, res.Items, 2)
 	require.Equal(t, uint(3), res.Items[0].ID)
@@ -611,7 +614,7 @@ func TestListFeed_DeletedVideo(t *testing.T) {
 		},
 	}})
 
-	res, err := svc.ListFeed(ctx, 0, "", 1)
+	res, err := svc.GlobalFeed(ctx, 0, "", 1)
 
 	// 断言
 	require.NoError(t, err)
@@ -669,10 +672,6 @@ func TestFeedViewBuilderResults(t *testing.T) {
 				}
 				builder.On("BuildSome", mock.Anything, videos[:2]).Return(buildResult).Once()
 
-				// 缓存路径直接预置实体，禁止无意间走到未设置的 DB 查询。
-				for _, v := range videos {
-					svc.localcache.Set(cache.Key("video:entity:%d", v.ID), v, l1CacheTTL)
-				}
 				seedTimeline := func(key string, popularity bool) {
 					for i, v := range videos {
 						score := float64(v.CreatedAt.UnixMilli())
@@ -690,7 +689,7 @@ func TestFeedViewBuilderResults(t *testing.T) {
 				switch path {
 				case "global_hot":
 					seedTimeline(timelineKey, false)
-					res, err = svc.ListFeed(ctx, 0, "", 2)
+					res, err = svc.GlobalFeed(ctx, 0, "", 2)
 				case "global_cold":
 					// 游标等于热区最老位置，触发公开入口的数据库降级路径。
 					cursor := video.Cursor{CreatedAt: base.Add(time.Second), ID: 99}
@@ -700,7 +699,7 @@ func TestFeedViewBuilderResults(t *testing.T) {
 					repo.On("ListLatest", mock.Anything, mock.MatchedBy(func(actual *video.Cursor) bool {
 						return actual != nil && actual.ID == cursor.ID && actual.CreatedAt.Equal(cursor.CreatedAt)
 					}), 3).Return(videos, nil).Once()
-					res, err = svc.ListFeed(ctx, 0, video.EncodeCursor(cursor), 2)
+					res, err = svc.GlobalFeed(ctx, 0, video.EncodeCursor(cursor), 2)
 				case "tag":
 					provider.On("ListByTag", mock.Anything, "旅行", (*video.Cursor)(nil), 3).
 						Return(videos, nil).Once()
@@ -719,6 +718,7 @@ func TestFeedViewBuilderResults(t *testing.T) {
 					}
 					res, err = svc.ListByFollowing(ctx, 7, "", 2)
 				case "following_cold":
+					ratings.On("GetUserRatings", mock.Anything, uint(7), mock.Anything).Return(map[uint]int8{3: 1, 2: -1}, nil).Maybe()
 					cursor := video.Cursor{CreatedAt: base.Add(time.Second), ID: 99}
 					require.NoError(t, cache.ZAdd(ctx, cache.Key("feed:following:%d", 7), feed.ZMember{
 						Score: float64(cursor.CreatedAt.UnixMilli()), Member: "99",
@@ -752,7 +752,9 @@ func TestFeedViewBuilderResults(t *testing.T) {
 					var appErr *apperrors.AppError
 					require.ErrorAs(t, err, &appErr)
 					require.Equal(t, http.StatusInternalServerError, appErr.Status)
-					require.Equal(t, "视频暂时无法展示", appErr.Msg)
+					// 所有流统一走 buildViews
+					wantMsg := "视频展示无法播放"
+					require.Equal(t, wantMsg, appErr.Msg)
 				} else {
 					require.NoError(t, err)
 					require.NotNil(t, res)
@@ -801,12 +803,22 @@ func TestFeedViewBuilderEmptyResults(t *testing.T) {
 			switch path {
 			case "global":
 				repo.On("ListLatest", mock.Anything, (*video.Cursor)(nil), 3).Return([]video.Video{}, nil).Once()
-				res, err = svc.listLatestFromDB(t.Context(), 0, nil, 2)
+				vs, hasMore, dbErr := svc.listFromDB(t.Context(), 0, nil, 2)
+				err = dbErr
+				require.NoError(t, dbErr)
+				require.Empty(t, vs)
+				require.False(t, hasMore)
+				res = &FeedListResult{Items: []video.VideoView{}}
 			case "following":
 				follows.On("ListFollowingIDs", mock.Anything, uint(7)).Return([]uint{}, nil).Once()
 				repo.On("ListLatestByAuthors", mock.Anything, []uint{}, (*video.Cursor)(nil), 3).
 					Return([]video.Video{}, nil).Once()
-				res, err = svc.listFollowingFromDB(t.Context(), 7, nil, 2)
+				vs, hasMore, dbErr := svc.listFollowingFromDB(t.Context(), 7, nil, 2)
+				err = dbErr
+				require.NoError(t, dbErr)
+				require.Empty(t, vs)
+				require.False(t, hasMore)
+				res = &FeedListResult{Items: []video.VideoView{}}
 			case "tag":
 				provider.On("ListByTag", mock.Anything, "旅行", (*video.Cursor)(nil), 3).
 					Return([]video.Video{}, nil).Once()

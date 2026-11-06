@@ -34,7 +34,7 @@ func (h *Handler) ListFeed(c *gin.Context) {
 		return
 	}
 
-	res, err := h.svc.ListFeed(c.Request.Context(), uint(accountID), cursor, limit)
+	res, err := h.svc.GlobalFeed(c.Request.Context(), uint(accountID), cursor, limit)
 	if err != nil {
 		response.FromError(c, err)
 		return
