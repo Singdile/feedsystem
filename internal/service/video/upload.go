@@ -78,15 +78,13 @@ type VideoRepo interface {
 }
 
 type VideoService struct {
-	repo        VideoRepo
-	cache       ChunkCache
-	videoCache  VideoCacheCleaner //仅视频缓存清理
-	entityCache EntityCache       // 视频缓存操作
-	viewBuilder ViewBuilder       //获取视频播放链接
+	repo       VideoRepo
+	cache      ChunkCache
+	videoCache VideoCacheCleaner //仅视频缓存清理
 }
 
-func NewVideoService(repo VideoRepo, cache ChunkCache, videoCache VideoCacheCleaner, entityCache EntityCache, viewbuilder ViewBuilder) *VideoService {
-	return &VideoService{repo: repo, cache: cache, videoCache: videoCache, entityCache: entityCache, viewBuilder: viewbuilder}
+func NewVideoService(repo VideoRepo, cache ChunkCache, videoCache VideoCacheCleaner) *VideoService {
+	return &VideoService{repo: repo, cache: cache, videoCache: videoCache}
 }
 
 type ChunkCache interface {
