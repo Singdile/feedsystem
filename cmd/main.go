@@ -8,11 +8,14 @@ import (
 	"feedsystem/internal/worker"
 	"fmt"
 	"log"
+	"net/http"
+	"os"
 	"time"
+	_ "net/http/pprof"
 
 	"feedsystem/internal/config"
 	"feedsystem/internal/data"
-	"feedsystem/internal/http"
+	feedHttp "feedsystem/internal/http"
 
 	rmq "github.com/rabbitmq/rabbitmq-amqp-go-client/pkg/rabbitmqamqp"
 )
@@ -86,7 +89,7 @@ func main() {
 	}
 
 	// 装配路由并启动 HTTP 服务
-	app := &http.App{
+	app := &feedHttp.App{
 		DB:            DB,
 		Cache:         rdb,
 		MC:            mc,
@@ -98,9 +101,18 @@ func main() {
 		PopularityPub: popularityPublisher,
 		Secret:        conf.JwtConfig,
 	}
-	router := http.SetRouter(app)
+	router := feedHttp.SetRouter(app)
 	hub.RegisterRoutes(router)
 
+	// 在非生产环境启动 pprof (独立端口)
+	if os.Getenv("FEED_ENV") != "prod" {
+		go func() {
+			log.Println("pprof listening on 127.0.0.1:6060")
+			if err := http.ListenAndServe("127.0.0.1:6060",nil); err != nil {
+				log.Printf("pprof server stopped: %v",err)
+			}
+		}()
+	}
 	addr := fmt.Sprintf(":%d", conf.AppConfig.Port)
 	log.Printf("Server is running on %s", addr)
 	if err := router.Run(addr); err != nil {
