@@ -9,9 +9,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"time"
-	_ "net/http/pprof"
 
 	"feedsystem/internal/config"
 	"feedsystem/internal/data"
@@ -108,8 +108,8 @@ func main() {
 	if os.Getenv("FEED_ENV") != "prod" {
 		go func() {
 			log.Println("pprof listening on 127.0.0.1:6060")
-			if err := http.ListenAndServe("127.0.0.1:6060",nil); err != nil {
-				log.Printf("pprof server stopped: %v",err)
+			if err := http.ListenAndServe("127.0.0.1:6060", nil); err != nil {
+				log.Printf("pprof server stopped: %v", err)
 			}
 		}()
 	}
