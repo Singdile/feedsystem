@@ -42,7 +42,8 @@ func SetRouter(app *App) *gin.Engine {
 	popularityMQ := videorepo.NewPopularityMQ(app.PopularityPub)
 
 	// services（依赖 repos）
-	viewBuilder := videosvc.NewVideoViewBuilder(videoRepo, videoRepo)
+	urlSigner := videosvc.NewCachingURLSigner(videoRepo)
+	viewBuilder := videosvc.NewVideoViewBuilder(urlSigner, videoRepo)
 	videoReader := videosvc.NewVideoReader(videoRepo, app.Cache)
 	followMaintainer := feedsvc.NewFollowingMaintainer(feedRepo)
 	videoSvc := videosvc.NewVideoService(videoRepo, app.Cache, videoCacheClean)
