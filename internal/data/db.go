@@ -2,11 +2,14 @@
 package data
 
 import (
+	"context"
 	"feedsystem/internal/config"
 	"feedsystem/internal/model/account"
 	"feedsystem/internal/model/feed"
 	"feedsystem/internal/model/video"
 	"fmt"
+	"log"
+	"time"
 
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
@@ -15,8 +18,10 @@ import (
 // NewDB 初始化数据库连接
 func NewDB(config config.DBConfig) (*gorm.DB, error) {
 	// 初始化
-	dsn := fmt.Sprintf("%v:%v@tcp(%v:%v)/%v?charset=utf8mb4&parseTime=True&loc=Local", config.User, config.Password, config.Host, config.Port, config.Dbname)
-	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
+	dsn := fmt.Sprintf("%v:%v@tcp(%v:%v)/%v?charset=utf8mb4&parseTime=True&loc=Local&timeout=2s&readTimeout=3s&writeTimeout=3s", config.User, config.Password, config.Host, config.Port, config.Dbname)
+	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{
+		DisableAutomaticPing: true,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -27,10 +32,42 @@ func NewDB(config config.DBConfig) (*gorm.DB, error) {
 		return nil, err
 	}
 
-	if err := sqlDB.Ping(); err != nil {
+	maxOpen := config.MaxOpenConns
+	if maxOpen <= 0 {
+		maxOpen = 40
+	}
+	maxIdle := config.MaxIdleConns
+	if maxIdle <= 0 {
+		maxIdle = 10
+	}
+
+	if maxIdle > maxOpen { //允许空闲的连接应该要比最大连接数要小
+		maxIdle = maxOpen
+	}
+
+	lifetime := config.ConnMaxLifetime
+	if lifetime <= 0 {
+		lifetime = 30 * time.Minute
+	}
+
+	idleTime := config.ConnMaxIdleTime
+	if idleTime <= 0 {
+		idleTime = 5 * time.Minute
+	}
+
+	sqlDB.SetMaxOpenConns(maxOpen)
+	sqlDB.SetMaxIdleConns(maxIdle)
+	sqlDB.SetConnMaxLifetime(lifetime)
+	sqlDB.SetConnMaxIdleTime(idleTime)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := sqlDB.PingContext(ctx); err != nil {
 		return nil, err
 	}
 
+	log.Printf("db pool: maxOpen=%d maxIdle=%d lifetime=%s idleTime=%s",
+		maxOpen, maxIdle, lifetime, idleTime)
 	return db, nil
 }
 
