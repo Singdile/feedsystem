@@ -324,3 +324,43 @@ func (r *videoRepo) GetTagsByVideoIDs(ctx context.Context, ids []uint) (map[uint
 
 	return res, nil
 }
+
+// 一组视频的tagid
+func (r *videoRepo) GetTagIDsByVideoIDs(ctx context.Context, ids []uint) (map[uint][]uint, error) {
+	out := make(map[uint][]uint, len(ids))
+	for _, id := range ids {
+		out[id] = []uint{} // 初始化
+	}
+
+	if len(ids) == 0 {
+		return out, nil
+	}
+
+	var rows []struct {
+		VideoID uint `gorm:"column:video_id"`
+		TagID   uint `gorm:"column:tag_id"`
+	}
+
+	err := r.db.WithContext(ctx).Model(&video.VideoTag{}).Select("video_id,tag_id").Where("video_id in (?)", ids).Find(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+
+	for _, row := range rows {
+		out[row.VideoID] = append(out[row.VideoID], row.TagID)
+	}
+	return out, nil
+}
+
+// 整表加载（标签表小）
+func (r *videoRepo) ListTagNames(ctx context.Context) (map[uint]string, error) {
+	var rows []video.Tag
+	if err := r.db.WithContext(ctx).Select("id, name").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make(map[uint]string, len(rows))
+	for _, t := range rows {
+		out[t.ID] = t.Name
+	}
+	return out, nil
+}

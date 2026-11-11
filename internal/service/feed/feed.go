@@ -57,8 +57,10 @@ type FollowProvider interface {
 	ListFollowingIDs(ctx context.Context, fanID uint) ([]uint, error)
 }
 
+// 给定 video ID，返回完整的视频实体
 type VideoReader interface {
 	GetByIDs(ctx context.Context, ids []uint) ([]video.Video, error)
+	FillTagIDs(ctx context.Context, videos []video.Video) error
 }
 
 // fetcher 按照游标最多取 limit 条数据
@@ -145,6 +147,10 @@ func encodeNextCursor(videos []video.Video, hasMore bool) string {
 }
 
 func (s *FeedService) buildViews(ctx context.Context, videos []video.Video) ([]video.VideoView, error) {
+	if err := s.videoReader.FillTagIDs(ctx, videos); err != nil {
+		log.Printf("填充视频标签失败，err: %v", err)
+	}
+
 	result := s.viewBuilder.BuildSome(ctx, videos)
 	for _, failure := range result.Failures {
 		log.Printf("视频展示失败： video_id = %d,err= %v", failure.VideoID, failure.Err)

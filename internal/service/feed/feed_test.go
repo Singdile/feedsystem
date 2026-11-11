@@ -110,6 +110,12 @@ func (m *MockVideoReader) GetByIDs(ctx context.Context, ids []uint) ([]video.Vid
 	return out, nil
 }
 
+// FillTagIDs Feed 层只关心"补齐 TagIDs"，测试里默认 no-op；
+// 需要验证标签逻辑时用 video 包的 TagsProvider 单测覆盖。
+func (m *MockVideoReader) FillTagIDs(ctx context.Context, videos []video.Video) error {
+	return nil
+}
+
 func (m *MockVideoProvider) ListByTag(ctx context.Context, tagName string, cursor *video.Cursor, limit int) ([]video.Video, error) {
 	args := m.Called(ctx, tagName, cursor, limit)
 	return args.Get(0).([]video.Video), args.Error(1)
@@ -912,9 +918,13 @@ type testTagsGetter struct {
 	ids   []uint
 }
 
-func (g *testTagsGetter) GetTagsByVideoIDs(_ context.Context, ids []uint) (map[uint][]string, error) {
+func (g *testTagsGetter) GetTags(_ context.Context, videos []video.Video) (map[uint][]string, error) {
 	g.calls++
-	g.ids = append([]uint(nil), ids...)
+	ids := make([]uint, 0, len(videos))
+	for _, v := range videos {
+		ids = append(ids, v.ID)
+	}
+	g.ids = ids
 	if g.err != nil {
 		return nil, g.err
 	}

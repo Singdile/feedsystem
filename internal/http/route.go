@@ -43,7 +43,9 @@ func SetRouter(app *App) *gin.Engine {
 
 	// services（依赖 repos）
 	urlSigner := videosvc.NewCachingURLSigner(videoRepo)
-	viewBuilder := videosvc.NewVideoViewBuilder(urlSigner, videoRepo)
+	tagNamesolver := videosvc.NewTagNameCache(videoRepo, 5*time.Minute)
+	tagsProvier := videosvc.NewTagProvider(videoRepo, tagNamesolver)
+	viewBuilder := videosvc.NewVideoViewBuilder(urlSigner, tagsProvier)
 	videoReader := videosvc.NewVideoReader(videoRepo, app.Cache)
 	followMaintainer := feedsvc.NewFollowingMaintainer(feedRepo)
 	videoSvc := videosvc.NewVideoService(videoRepo, app.Cache, videoCacheClean)

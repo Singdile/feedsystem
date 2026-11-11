@@ -33,6 +33,7 @@ type VideoReader struct {
 type VideoReadRepo interface {
 	FindByID(ctx context.Context, id uint) (*video.Video, error)
 	GetVideosByIDs(ctx context.Context, ids []uint) ([]video.Video, error)
+	GetTagIDsByVideoIDs(ctx context.Context, ids []uint) (map[uint][]uint, error)
 }
 
 type VideoEntityCache interface {
@@ -99,6 +100,14 @@ func (r *VideoReader) GetByID(ctx context.Context, id uint) (*video.Video, error
 			log.Printf("查询视频失败 video_id=%d err=%v", id, err)
 			return nil, apperrors.NewAppError(http.StatusInternalServerError, "视频查询失败")
 		}
+
+		// tag
+		tmp := []video.Video{*v}
+		if err := r.FillTagIDs(ctx, tmp); err != nil {
+			log.Printf("fill tag ids failed : %v", err)
+		}
+		v.TagIDs = tmp[0].TagIDs
+
 		// 回填L2;L1
 		entity := v.ToVideoEntityCache()
 		if b, err := json.Marshal(entity); err == nil {
@@ -180,6 +189,10 @@ func (r *VideoReader) GetByIDs(ctx context.Context, ids []uint) ([]video.Video, 
 			return nil, err
 		}
 
+		if err := r.FillTagIDs(ctx, videoBatch); err != nil {
+			log.Printf("fill tag ids failed : %v", err)
+		}
+
 		for _, v := range videoBatch {
 			videoMap[v.ID] = v
 			// 回填redis,localcache
@@ -202,4 +215,34 @@ func (r *VideoReader) GetByIDs(ctx context.Context, ids []uint) ([]video.Video, 
 		}
 	}
 	return result, nil
+}
+
+// 读取视频实体对应的tag_id
+func (r *VideoReader) FillTagIDs(ctx context.Context, videos []video.Video) error {
+	ids := make([]uint, 0, len(videos))
+	for i := range videos {
+		if videos[i].TagIDs == nil {
+			ids = append(ids, videos[i].ID)
+		}
+	}
+
+	if len(ids) == 0 {
+		return nil
+	}
+
+	tagIDs, err := r.repo.GetTagIDsByVideoIDs(ctx, ids)
+	if err != nil {
+		return err
+	}
+
+	for i := range videos {
+		if videos[i].TagIDs == nil {
+			videos[i].TagIDs = tagIDs[videos[i].ID]
+			if videos[i].TagIDs == nil {
+				videos[i].TagIDs = []uint{}
+			}
+		}
+	}
+
+	return nil
 }

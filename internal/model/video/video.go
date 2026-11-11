@@ -25,6 +25,7 @@ type Video struct {
 	LikedCount    uint           `gorm:"not null;default:0" json:"liked_count"`
 	DislikedCount uint           `gorm:"not null;default:0" json:"disliked_count"`
 	CommentCount  uint           `gorm:"not null;default:0" json:"comment_count"` // 视频评论总数
+	TagIDs        []uint         `gorm:"-" json:"-"`
 }
 
 // InitReq 上传视频请求参数
@@ -149,6 +150,14 @@ type VideoEntityCache struct {
 	LikedCount    uint      `json:"liked_count"`
 	DislikedCount uint      `json:"disliked_count"`
 	CommentCount  uint      `json:"comment_count"` // 视频评论总数
+	TagIDs        []uint    `json:"tag_ids"`
+}
+
+func cloneIDs(ids []uint) []uint {
+	if ids == nil {
+		return nil
+	}
+	return append([]uint{}, ids...)
 }
 
 func (v Video) ToVideoEntityCache() VideoEntityCache {
@@ -164,6 +173,7 @@ func (v Video) ToVideoEntityCache() VideoEntityCache {
 		LikedCount:    v.LikedCount,
 		DislikedCount: v.DislikedCount,
 		CommentCount:  v.CommentCount,
+		TagIDs:        cloneIDs(v.TagIDs),
 	}
 }
 
@@ -180,5 +190,6 @@ func (c VideoEntityCache) ToVideo() Video {
 		LikedCount:    c.LikedCount,
 		DislikedCount: c.DislikedCount,
 		CommentCount:  c.CommentCount,
+		TagIDs:        cloneIDs(c.TagIDs),
 	}
 }

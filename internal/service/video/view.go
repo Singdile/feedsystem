@@ -10,8 +10,8 @@ import (
 )
 
 type VideoViewBuilder struct {
-	singer     URLSigner
-	tagsGetter TagsGetter
+	singer       URLSigner
+	tagsProvider TagsProvider
 }
 
 type ViewBuilFailure struct {
@@ -30,21 +30,21 @@ type URLSigner interface {
 	PresignedGetObject(ctx context.Context, objectKey string, expiry time.Duration) (string, error)
 }
 
-// 查询视频标签
-type TagsGetter interface {
-	GetTagsByVideoIDs(ctx context.Context, ids []uint) (map[uint][]string, error)
+type TagsProvider interface {
+	GetTags(ctx context.Context, videos []videomodel.Video) (map[uint][]string, error)
 }
 
-func NewVideoViewBuilder(signer URLSigner, tagsGetter TagsGetter) *VideoViewBuilder {
+func NewVideoViewBuilder(signer URLSigner, tagsProvider TagsProvider) *VideoViewBuilder {
 	return &VideoViewBuilder{
-		singer:     signer,
-		tagsGetter: tagsGetter,
+		singer:       signer,
+		tagsProvider: tagsProvider,
 	}
 }
 
 func (b *VideoViewBuilder) BuildSome(ctx context.Context, videos []videomodel.Video) ViewBuildResult {
 	views := make([]videomodel.VideoView, 0, len(videos))
 	failures := make([]ViewBuilFailure, 0)
+	kept := make([]videomodel.Video, 0, len(videos))
 	for i, v := range videos {
 		view, err := b.videoView(ctx, &v)
 		if err != nil {
@@ -56,19 +56,15 @@ func (b *VideoViewBuilder) BuildSome(ctx context.Context, videos []videomodel.Vi
 			continue
 		}
 		views = append(views, view)
+		kept = append(kept, v)
 	}
 
 	// 获取视频tags
-	ids := make([]uint, 0, len(views))
-	for _, v := range views {
-		ids = append(ids, v.ID)
-	}
-	tagMap, err := b.tagsGetter.GetTagsByVideoIDs(ctx, ids)
+	tagMap, err := b.tagsProvider.GetTags(ctx, kept)
 	if err != nil {
-		log.Printf("获取tag失败,err: %v", err)
+		log.Printf("获取tag失败，err: %v", err)
 	}
-
-	for i := range len(views) {
+	for i := range views {
 		views[i].HashTags = tagMap[views[i].ID]
 	}
 
@@ -81,7 +77,7 @@ func (b *VideoViewBuilder) BuildOne(ctx context.Context, video videomodel.Video)
 		return videomodel.VideoView{}, err
 	}
 
-	tagMap, err := b.tagsGetter.GetTagsByVideoIDs(ctx, []uint{view.ID})
+	tagMap, err := b.tagsProvider.GetTags(ctx, []videomodel.Video{video})
 	if err != nil {
 		log.Printf("获取tag失败,err: %v", err)
 	}

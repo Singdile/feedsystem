@@ -40,15 +40,18 @@ type viewTestTags struct {
 	err   error             // 模拟数据库故障
 }
 
-func (g *viewTestTags) GetTagsByVideoIDs(_ context.Context, ids []uint) (map[uint][]string, error) {
-	// 保存参数副本，避免被调用方后续修改切片影响断言。
-	g.calls = append(g.calls, append([]uint(nil), ids...))
+func (g *viewTestTags) GetTags(_ context.Context, videos []videomodel.Video) (map[uint][]string, error) {
+	ids := make([]uint, 0, len(videos))
+	for _, v := range videos {
+		ids = append(ids, v.ID)
+	}
+	g.calls = append(g.calls, ids)
 	return g.tags, g.err
 }
 
 var (
-	_ URLSigner  = (*viewTestSigner)(nil)
-	_ TagsGetter = (*viewTestTags)(nil)
+	_ URLSigner    = (*viewTestSigner)(nil)
+	_ TagsProvider = (*viewTestTags)(nil)
 )
 
 // 准备统一的视频数据

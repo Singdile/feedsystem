@@ -23,8 +23,11 @@ type readerTestRepo struct {
 	mu         sync.Mutex
 	findCalls  []uint
 	batchCalls [][]uint
+	tagCalls   [][]uint
 	find       func(context.Context, uint) (*videomodel.Video, error)
 	batch      func(context.Context, []uint) ([]videomodel.Video, error)
+	tags       map[uint][]uint
+	tagErr     error
 }
 
 func (r *readerTestRepo) FindByID(ctx context.Context, id uint) (*videomodel.Video, error) {
@@ -45,6 +48,33 @@ func (r *readerTestRepo) GetVideosByIDs(ctx context.Context, ids []uint) ([]vide
 		return nil, errors.New("unexpected GetVideosByIDs call")
 	}
 	return r.batch(ctx, ids)
+}
+
+// GetTagIDsByVideoIDs 默认给每个请求的 id 返回空切片（表示"已加载、无标签"）。
+func (r *readerTestRepo) GetTagIDsByVideoIDs(_ context.Context, ids []uint) (map[uint][]uint, error) {
+	r.mu.Lock()
+	r.tagCalls = append(r.tagCalls, append([]uint(nil), ids...))
+	tags, err := r.tags, r.tagErr
+	r.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+
+	out := make(map[uint][]uint, len(ids))
+	for _, id := range ids {
+		if v, ok := tags[id]; ok {
+			out[id] = append([]uint{}, v...)
+		} else {
+			out[id] = []uint{}
+		}
+	}
+	return out, nil
+}
+
+func (r *readerTestRepo) tagIDCalls() [][]uint {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([][]uint(nil), r.tagCalls...)
 }
 
 type readerTestCache struct {
@@ -125,6 +155,7 @@ func readerTestVideo(id uint) videomodel.Video {
 		VideoKey: fmt.Sprintf("videos/%d.mp4", id), CoverKey: fmt.Sprintf("covers/%d.jpg", id),
 		LikedCount: 5, DislikedCount: 2, CommentCount: 8,
 		CreatedAt: time.Date(2026, time.November, 5, 8, 0, 0, 0, time.UTC),
+		TagIDs:    []uint{},
 	}
 }
 
@@ -496,4 +527,93 @@ func TestVideoReaderConcurrentGetByID(t *testing.T) {
 		require.Equal(t, "video-42", result.Title)
 	}
 	require.Equal(t, "video-42", v.Title)
+}
+
+func TestVideoReaderGetByIDLoadsTagIDs(t *testing.T) {
+	cache := newReaderTestCache()
+	v := readerTestVideo(42)
+	v.TagIDs = nil
+	repo := &readerTestRepo{
+		find: func(context.Context, uint) (*videomodel.Video, error) { return &v, nil },
+		tags: map[uint][]uint{42: {7, 8}},
+	}
+	reader := NewVideoReader(repo, cache)
+
+	result, err := reader.GetByID(t.Context(), 42)
+
+	require.NoError(t, err)
+	require.Equal(t, []uint{7, 8}, result.TagIDs)
+	require.Equal(t, [][]uint{{42}}, repo.tagIDCalls())
+
+	expected := v
+	expected.TagIDs = []uint{7, 8}
+	assertReaderL1(t, reader, expected)
+}
+
+func TestVideoReaderGetByIDsLoadsTagIDs(t *testing.T) {
+	cache := newReaderTestCache()
+	v30, v10 := readerTestVideo(30), readerTestVideo(10)
+	v30.TagIDs, v10.TagIDs = nil, nil
+	repo := &readerTestRepo{
+		batch: func(context.Context, []uint) ([]videomodel.Video, error) {
+			return []videomodel.Video{v10, v30}, nil
+		},
+		tags: map[uint][]uint{
+			30: {1, 2},
+			10: {3},
+		},
+	}
+	reader := NewVideoReader(repo, cache)
+
+	result, err := reader.GetByIDs(t.Context(), []uint{30, 10})
+
+	require.NoError(t, err)
+	require.Len(t, result, 2)
+	require.Equal(t, []uint{1, 2}, result[0].TagIDs)
+	require.Equal(t, []uint{3}, result[1].TagIDs)
+	tagCalls := repo.tagIDCalls()
+	require.Len(t, tagCalls, 1)
+	require.ElementsMatch(t, []uint{30, 10}, tagCalls[0], "批量查询的 ID 顺序不影响结果")
+
+	expected30 := readerTestVideo(30)
+	expected30.TagIDs = []uint{1, 2}
+	expected10 := readerTestVideo(10)
+	expected10.TagIDs = []uint{3}
+	assertReaderL1(t, reader, expected30)
+	assertReaderL1(t, reader, expected10)
+}
+
+func TestVideoReaderFillTagIDs(t *testing.T) {
+	repo := &readerTestRepo{tags: map[uint][]uint{1: {4, 5}}}
+	reader := NewVideoReader(repo, newReaderTestCache())
+
+	videos := []videomodel.Video{
+		{ID: 1, TagIDs: nil},
+		{ID: 2, TagIDs: []uint{}},
+		{ID: 3, TagIDs: []uint{9}},
+	}
+
+	require.NoError(t, reader.FillTagIDs(t.Context(), videos))
+	require.Equal(t, []uint{4, 5}, videos[0].TagIDs)
+	require.NotNil(t, videos[1].TagIDs)
+	require.Empty(t, videos[1].TagIDs)
+	require.Equal(t, []uint{9}, videos[2].TagIDs)
+	require.Equal(t, [][]uint{{1}}, repo.tagIDCalls(), "只查询 TagIDs 为 nil 的视频")
+
+	// 已经加载过的 TagIDs 不应重复查询。
+	require.NoError(t, reader.FillTagIDs(t.Context(), videos))
+	require.Equal(t, [][]uint{{1}}, repo.tagIDCalls())
+}
+
+func TestVideoReaderFillTagIDsError(t *testing.T) {
+	dbErr := errors.New("tag db down")
+	repo := &readerTestRepo{tagErr: dbErr}
+	reader := NewVideoReader(repo, newReaderTestCache())
+
+	videos := []videomodel.Video{{ID: 1}}
+
+	err := reader.FillTagIDs(t.Context(), videos)
+
+	require.ErrorIs(t, err, dbErr)
+	require.Nil(t, videos[0].TagIDs, "查询失败时应保持 nil，留待下次重试")
 }
