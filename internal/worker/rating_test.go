@@ -2,11 +2,11 @@ package worker
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"testing"
+
 	"feedsystem/internal/messaging"
 	"feedsystem/internal/model/video"
-	"testing"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -21,68 +21,86 @@ func (m *MockRatingSetter) SetRating(ctx context.Context, videoID, accountID uin
 	return args.Error(0)
 }
 
-// fakeMessage 是 messaging.Message 的测试实现，用来替代真实的 AMQP delivery
-type fakeMessage struct {
-	body     []byte
-	accepted bool
-}
-
-func (m *fakeMessage) Body() []byte { return m.body }
-
-func (m *fakeMessage) Accept(ctx context.Context) error {
-	m.accepted = true
-	return nil
-}
-
-var _ messaging.Message = (*fakeMessage)(nil)
-
 // TestRatingHandler 测试RatingHandler的运行逻辑是否正确
 func TestRatingHandler(t *testing.T) {
-	likeBody, _ := json.Marshal(video.RatingEvent{
-		EventID:   "",
+	likeEvent := video.RatingEvent{
+		EventID:   "evt-rating-like",
 		Action:    "like",
-		AccountID: uint(1),
-		VideoID:   uint(1),
-	})
+		AccountID: 1,
+		VideoID:   1,
+	}
 
 	tests := []struct {
 		name          string                  // 测试名称
-		body          []byte                  // 测试数据
-		setup         func(*MockRatingSetter) //设置
-		wantErr       bool                    //预期
-		wantAccepted  bool                    //预期
-		wantSetRating bool                    //预期
+		msg           *fakeMessage            // 测试消息
+		setup         func(*MockRatingSetter) // 设置
+		wantErr       bool                    // 是否期望 handler 返回 error
+		wantAccepted  bool                    // 是否期望消息被 settle
+		wantSetRating bool                    // 是否期望调用 SetRating
 	}{
-		{"合法like", likeBody, func(m *MockRatingSetter) { m.On("SetRating", mock.Anything, uint(1), uint(1), int8(1)).Return(nil) }, false, true, true},
-		{"JSON非法", []byte("not-json"), func(m *MockRatingSetter) {}, false, true, false},
-		{"action非法", []byte(`{"action":"praise","account_id":1,"video_id":3}`), func(m *MockRatingSetter) {}, false, true, false},
-		{"SetRating失败 → 重试3次后Accept丢弃", likeBody, func(m *MockRatingSetter) {
-			m.On("SetRating", mock.Anything, uint(1), uint(1), int8(1)).Return(errors.New("db down"))
+		{
+			name: "合法 like",
+			msg:  envelopeMessage(t, messaging.EventTypeRating, likeEvent),
+			setup: func(m *MockRatingSetter) {
+				m.On("SetRating", mock.Anything, uint(1), uint(1), int8(1)).Return(nil)
+			},
+			wantAccepted:  true,
+			wantSetRating: true,
 		},
-			false, true, true},
+		{
+			name:         "非法 JSON",
+			msg:          rawMessage([]byte("not-json")),
+			wantErr:      true,
+			wantAccepted: true,
+		},
+		{
+			name:         "事件类型不匹配",
+			msg:          envelopeMessage(t, messaging.EventTypeComment, likeEvent),
+			wantErr:      true,
+			wantAccepted: true,
+		},
+		{
+			name: "action 非法",
+			msg: envelopeMessage(t, messaging.EventTypeRating, video.RatingEvent{
+				EventID:   "evt-rating-bad",
+				Action:    "praise",
+				AccountID: 1,
+				VideoID:   3,
+			}),
+			wantAccepted: true,
+		},
+		{
+			name: "SetRating 失败 → 重试后 Accept 丢弃",
+			msg:  envelopeMessage(t, messaging.EventTypeRating, likeEvent),
+			setup: func(m *MockRatingSetter) {
+				m.On("SetRating", mock.Anything, uint(1), uint(1), int8(1)).Return(errors.New("db down"))
+			},
+			wantAccepted:  true,
+			wantSetRating: true,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			repo := new(MockRatingSetter)
-			tt.setup(repo)
-			msg := &fakeMessage{body: tt.body}
+			if tt.setup != nil {
+				tt.setup(repo)
+			}
 
-			err := RatingHandler(repo)(context.Background(), msg)
+			err := RatingHandler(repo)(context.Background(), tt.msg)
 
 			if tt.wantErr {
 				require.Error(t, err)
 			} else {
 				require.NoError(t, err)
 			}
-			require.Equal(t, tt.wantAccepted, msg.accepted) // ← 断言 settle
+			require.Equal(t, tt.wantAccepted, tt.msg.accepted) // ← 断言 settle
 
 			if tt.wantSetRating {
 				repo.AssertExpectations(t)
 			} else {
 				repo.AssertNotCalled(t, "SetRating")
 			}
-			repo.AssertExpectations(t)
 		})
 	}
 }

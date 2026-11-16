@@ -12,7 +12,9 @@ import (
 func TestPublisher_Nil(t *testing.T) {
 	var nilPublisher *Publisher
 	require.ErrorIs(t, nilPublisher.PublishJSON(context.Background(), struct{}{}), ErrNilPublisher)
+	require.ErrorIs(t, nilPublisher.Publish(context.Background(), &Envelope{}), ErrNilPublisher)
 
 	empty := &Publisher{}
 	require.ErrorIs(t, empty.PublishJSON(context.Background(), struct{}{}), ErrNilPublisher)
+	require.ErrorIs(t, empty.Publish(context.Background(), &Envelope{}), ErrNilPublisher)
 }
