@@ -4,7 +4,6 @@ package main
 import (
 	"context"
 	"feedsystem/internal/pkg/jwt"
-	"feedsystem/internal/repository/social"
 	"feedsystem/internal/worker"
 	"fmt"
 	"log"
@@ -55,17 +54,6 @@ func main() {
 		log.Printf("RabbitMQ connected")
 	}
 
-	// 时间线链路：声明交换机+发布者+启动worker
-	ctx := context.Background()
-	timelinePublisher := initTimelineMQ(ctx, mq)
-
-	// outboxPoller 无论mq 是否可用都可以使用
-	worker.OutboxPoller(ctx, DB, rdb, timelinePublisher)
-	socialRepo := social.NewSocialRepo(DB)
-	if mq != nil && timelinePublisher != nil {
-		worker.RunConsumer(ctx, mq, data.TimelineQueue, worker.TimelineHandler(rdb, socialRepo))
-	}
-
 	// 连接minio
 	mc, err := data.NewMinioClient(conf.MinIOConfig)
 	if err != nil {
@@ -75,16 +63,19 @@ func main() {
 	}
 
 	// 声明topo结构
-	ratingPublisher := initRatingMQ(ctx, mq)
-	commentPublisher := initCommentMQ(ctx, mq)
-	socialPublisher := initSocialMQ(ctx, mq)
-	popularityPublisher := initPopularityMQ(ctx, mq)
-	initNotificationMQ(ctx, mq)
+	topCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ratingPublisher := initRatingMQ(topCtx, mq)
+	commentPublisher := initCommentMQ(topCtx, mq)
+	socialPublisher := initSocialMQ(topCtx, mq)
+	popularityPublisher := initPopularityMQ(topCtx, mq)
+	initNotificationMQ(topCtx, mq)
 
 	// 创建 SSEHub
 	hub := worker.NewSSEHub(DB, rdb, jwt.SetSecret(conf.JwtConfig.Secret))
 	// 启动 NotificationWorker 消费 notification.events 队列
 	if mq != nil {
+		ctx := context.Background()
 		worker.RunConsumer(ctx, mq, data.NotificationQueue, worker.NotificationHandler(DB, hub, rdb))
 	}
 
@@ -94,7 +85,6 @@ func main() {
 		Cache:         rdb,
 		MC:            mc,
 		MQ:            mq,
-		TimelinePub:   timelinePublisher,
 		RatingMQPub:   ratingPublisher,
 		CommentMQPub:  commentPublisher,
 		SocialMQPub:   socialPublisher,
@@ -118,28 +108,6 @@ func main() {
 	if err := router.Run(addr); err != nil {
 		log.Fatalf("failed to run server: %v", err)
 	}
-}
-
-// initTimelineMQ 声明拓扑并创建发布者；失败返回nil
-func initTimelineMQ(ctx context.Context, mq *data.RabbitMQClient) *rmq.Publisher {
-	if mq == nil {
-		return nil
-	}
-
-	topoCtx, cancel := context.WithTimeout(ctx, time.Second*5)
-	defer cancel()
-	// 顺序：先声明拓扑，再建发布者
-	if err := mq.DeclareTimelineTopology(topoCtx); err != nil {
-		log.Printf("failed to declare timeline topology,err: %v", err)
-		return nil
-	}
-
-	pub, err := mq.NewTimelinePublisher(topoCtx)
-	if err != nil {
-		log.Printf("failed to create timeline publisher,err: %v", err)
-		return nil
-	}
-	return pub
 }
 
 // initRatingMQ 声明rating拓扑并创建发表者； 失败返回nil

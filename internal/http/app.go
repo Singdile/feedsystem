@@ -14,7 +14,6 @@ type App struct {
 	Cache         *data.RedisClient
 	MC            *data.MinioClient
 	MQ            *data.RabbitMQClient
-	TimelinePub   *rmq.Publisher
 	RatingMQPub   *rmq.Publisher
 	CommentMQPub  *rmq.Publisher
 	SocialMQPub   *rmq.Publisher

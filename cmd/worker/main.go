@@ -5,6 +5,7 @@ import (
 	"context"
 	"feedsystem/internal/config"
 	"feedsystem/internal/data"
+	"feedsystem/internal/repository/social"
 	"feedsystem/internal/repository/video"
 	"feedsystem/internal/worker"
 	"log"
@@ -12,6 +13,8 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	rmq "github.com/rabbitmq/rabbitmq-amqp-go-client/pkg/rabbitmqamqp"
 )
 
 func main() {
@@ -53,6 +56,15 @@ func main() {
 	ratingSeter := video.NewRatingRepo(DB, rdb)
 	worker.RunConsumer(ctx, mq, data.RatingQueue, worker.RatingHandler(ratingSeter))
 
+	// 启动timeline
+	timelinePublisher := initTimelineMQ(ctx, mq)
+
+	// outboxPoller 无论mq 是否可用都可以使用
+	worker.OutboxPoller(ctx, DB, rdb, timelinePublisher)
+	socialRepo := social.NewSocialRepo(DB)
+	if mq != nil && timelinePublisher != nil {
+		worker.RunConsumer(ctx, mq, data.TimelineQueue, worker.TimelineHandler(rdb, socialRepo))
+	}
 	// 声明comment 拓扑
 	if err := mq.DeclareCommentTopology(topoCtx); err != nil {
 		log.Fatalf("failed to declare comment topology: %v", err)
@@ -70,4 +82,26 @@ func main() {
 	worker.RunConsumer(ctx, mq, data.PopularityQueue, worker.PopularityHandler(popularityCache))
 
 	<-ctx.Done() // 阻塞等待 SIGINT/SIGTERM
+}
+
+// initTimelineMQ 声明拓扑并创建发布者；失败返回nil
+func initTimelineMQ(ctx context.Context, mq *data.RabbitMQClient) *rmq.Publisher {
+	if mq == nil {
+		return nil
+	}
+
+	topoCtx, cancel := context.WithTimeout(ctx, time.Second*5)
+	defer cancel()
+	// 顺序：先声明拓扑，再建发布者
+	if err := mq.DeclareTimelineTopology(topoCtx); err != nil {
+		log.Printf("failed to declare timeline topology,err: %v", err)
+		return nil
+	}
+
+	pub, err := mq.NewTimelinePublisher(topoCtx)
+	if err != nil {
+		log.Printf("failed to create timeline publisher,err: %v", err)
+		return nil
+	}
+	return pub
 }

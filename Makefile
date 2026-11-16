@@ -4,7 +4,7 @@ APP_WORKER    := $(APP_NAME)-worker
 
 
 # 2. 【核心】默认目标 (必须放在第一个目标位置)
-all: tidy build
+all: tidy build build-worker
 
 # 3. 基础开发指令 (Build, Run, Test)
 build:
