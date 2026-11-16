@@ -5,19 +5,17 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
-	"feedsystem/internal/data"
+	"feedsystem/internal/messaging"
 	"feedsystem/internal/model/video"
 	"time"
-
-	rmq "github.com/rabbitmq/rabbitmq-amqp-go-client/pkg/rabbitmqamqp"
 )
 
 // ratingMQ 实现 service/video.RatingMQ
 type ratingMQ struct {
-	pub *rmq.Publisher
+	pub *messaging.Publisher
 }
 
-func NewRatingMQ(pub *rmq.Publisher) *ratingMQ {
+func NewRatingMQ(pub *messaging.Publisher) *ratingMQ {
 	return &ratingMQ{pub: pub}
 }
 
@@ -33,7 +31,7 @@ func (m *ratingMQ) PublishRating(ctx context.Context, action string, accountID, 
 		OccurredAt: time.Now(),
 	}
 
-	return data.PublishJSON(ctx, m.pub, msg)
+	return m.pub.PublishJSON(ctx, msg)
 }
 
 // randHex 生成随机的n*2位16进制

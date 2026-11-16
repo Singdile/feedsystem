@@ -3,18 +3,16 @@ package video
 import (
 	"context"
 	"errors"
-	"feedsystem/internal/data"
+	"feedsystem/internal/messaging"
 	"feedsystem/internal/model/video"
-
-	rmq "github.com/rabbitmq/rabbitmq-amqp-go-client/pkg/rabbitmqamqp"
 )
 
 // popularityMQ
 type popularityMQ struct {
-	pub *rmq.Publisher
+	pub *messaging.Publisher
 }
 
-func NewPopularityMQ(pub *rmq.Publisher) *popularityMQ {
+func NewPopularityMQ(pub *messaging.Publisher) *popularityMQ {
 	return &popularityMQ{pub: pub}
 }
 
@@ -28,5 +26,5 @@ func (m *popularityMQ) UpdatePopularity(ctx context.Context, videoID uint, chang
 		Change:  int64(change),
 	}
 
-	return data.PublishJSON(ctx, m.pub, msg)
+	return m.pub.PublishJSON(ctx, msg)
 }

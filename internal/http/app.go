@@ -3,8 +3,8 @@ package http
 import (
 	"feedsystem/internal/config"
 	"feedsystem/internal/data"
+	"feedsystem/internal/messaging"
 
-	rmq "github.com/rabbitmq/rabbitmq-amqp-go-client/pkg/rabbitmqamqp"
 	"gorm.io/gorm"
 )
 
@@ -13,10 +13,9 @@ type App struct {
 	DB            *gorm.DB
 	Cache         *data.RedisClient
 	MC            *data.MinioClient
-	MQ            *data.RabbitMQClient
-	RatingMQPub   *rmq.Publisher
-	CommentMQPub  *rmq.Publisher
-	SocialMQPub   *rmq.Publisher
-	PopularityPub *rmq.Publisher
+	RatingMQPub   *messaging.Publisher
+	CommentMQPub  *messaging.Publisher
+	SocialMQPub   *messaging.Publisher
+	PopularityPub *messaging.Publisher
 	Secret        config.JwtConfig
 }

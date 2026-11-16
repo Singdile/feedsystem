@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"feedsystem/internal/messaging"
 	"feedsystem/internal/pkg/jwt"
 	"feedsystem/internal/worker"
 	"fmt"
@@ -15,8 +16,6 @@ import (
 	"feedsystem/internal/config"
 	"feedsystem/internal/data"
 	feedHttp "feedsystem/internal/http"
-
-	rmq "github.com/rabbitmq/rabbitmq-amqp-go-client/pkg/rabbitmqamqp"
 )
 
 func main() {
@@ -46,12 +45,39 @@ func main() {
 	defer rdb.Close()
 
 	// 连接rabbitmq（MQ 不可用时降级禁用，不阻塞启动）
-	mq, err := data.NewRabbitMQ(conf.RabbitMQConfig)
+	mq, err := messaging.NewClient(conf.RabbitMQConfig)
 	if err != nil {
 		log.Printf("rabbitmq connect failed (mq disabled): %v", err)
 		mq = nil
 	} else {
 		log.Printf("RabbitMQ connected")
+	}
+
+	var (
+		ratingPublisher     *messaging.Publisher
+		commentPublisher    *messaging.Publisher
+		socialPublisher     *messaging.Publisher
+		popularityPublisher *messaging.Publisher
+	)
+
+	if mq != nil {
+		topCtx, cancelTopo := context.WithTimeout(context.Background(), 30*time.Second)
+		err := messaging.DeclareAll(topCtx, mq)
+		cancelTopo()
+		if err != nil {
+			log.Printf("rabbitmq topology declaration failed: %v", err)
+			mq = nil
+		}
+	}
+
+	if mq != nil {
+		pubCtx, cancelPub := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancelPub()
+
+		ratingPublisher = initPublisher("rating", pubCtx, mq.NewRatingPublisher)
+		commentPublisher = initPublisher("comment", pubCtx, mq.NewCommentPublisher)
+		socialPublisher = initPublisher("social", pubCtx, mq.NewSocialPublisher)
+		popularityPublisher = initPublisher("popularity", pubCtx, mq.NewPopularityPublisher)
 	}
 
 	// 连接minio
@@ -62,21 +88,11 @@ func main() {
 		log.Printf("minio connect success")
 	}
 
-	// 声明topo结构
-	topCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	ratingPublisher := initRatingMQ(topCtx, mq)
-	commentPublisher := initCommentMQ(topCtx, mq)
-	socialPublisher := initSocialMQ(topCtx, mq)
-	popularityPublisher := initPopularityMQ(topCtx, mq)
-	initNotificationMQ(topCtx, mq)
-
 	// 创建 SSEHub
 	hub := worker.NewSSEHub(DB, rdb, jwt.SetSecret(conf.JwtConfig.Secret))
 	// 启动 NotificationWorker 消费 notification.events 队列
 	if mq != nil {
-		ctx := context.Background()
-		worker.RunConsumer(ctx, mq, data.NotificationQueue, worker.NotificationHandler(DB, hub, rdb))
+		messaging.RunConsumer(context.Background(), mq, messaging.NotificationQueue, worker.NotificationHandler(DB, hub, rdb))
 	}
 
 	// 装配路由并启动 HTTP 服务
@@ -84,7 +100,6 @@ func main() {
 		DB:            DB,
 		Cache:         rdb,
 		MC:            mc,
-		MQ:            mq,
 		RatingMQPub:   ratingPublisher,
 		CommentMQPub:  commentPublisher,
 		SocialMQPub:   socialPublisher,
@@ -109,91 +124,10 @@ func main() {
 		log.Fatalf("failed to run server: %v", err)
 	}
 }
-
-// initRatingMQ 声明rating拓扑并创建发表者； 失败返回nil
-func initRatingMQ(ctx context.Context, mq *data.RabbitMQClient) *rmq.Publisher {
-	if mq == nil {
-		return nil
-	}
-
-	topoCtx, cancel := context.WithTimeout(ctx, time.Second*5)
-	defer cancel()
-	// 顺序：先声明拓扑，再建发布者
-	if err := mq.DeclareRatingTopology(topoCtx); err != nil {
-		log.Printf("failed to declare rating topology,err: %v", err)
-		return nil
-	}
-
-	pub, err := mq.NewRatingPublisher(topoCtx)
+func initPublisher(name string, ctx context.Context, f func(context.Context) (*messaging.Publisher, error)) *messaging.Publisher {
+	pub, err := f(ctx)
 	if err != nil {
-		log.Printf("failed to create rating publisher,err: %v", err)
-		return nil
-	}
-	return pub
-}
-
-func initCommentMQ(ctx context.Context, mq *data.RabbitMQClient) *rmq.Publisher {
-	if mq == nil {
-		return nil
-	}
-	topoCtx, cancel := context.WithTimeout(ctx, time.Second*5)
-	defer cancel()
-	if err := mq.DeclareCommentTopology(topoCtx); err != nil {
-		log.Printf("failed to declare comment topology,err: %v", err)
-		return nil
-	}
-	pub, err := mq.NewCommentPublisher(topoCtx)
-	if err != nil {
-		log.Printf("failed to create comment publisher,err: %v", err)
-		return nil
-	}
-	return pub
-}
-
-func initSocialMQ(ctx context.Context, mq *data.RabbitMQClient) *rmq.Publisher {
-	if mq == nil {
-		return nil
-	}
-	topoCtx, cancel := context.WithTimeout(ctx, time.Second*5)
-	defer cancel()
-	if err := mq.DeclareSocialTopology(topoCtx); err != nil {
-		log.Printf("failed to declare comment topology,err: %v", err)
-		return nil
-	}
-
-	pub, err := mq.NewSocialPublisher(topoCtx)
-	if err != nil {
-		log.Printf("failed to create comment publisher,err: %v", err)
-		return nil
-	}
-	return pub
-}
-
-func initNotificationMQ(ctx context.Context, mq *data.RabbitMQClient) {
-	if mq == nil {
-		return
-	}
-	topoCtx, cancel := context.WithTimeout(ctx, time.Second*5)
-	defer cancel()
-	if err := mq.DeclareNotificationTopology(topoCtx); err != nil {
-		log.Printf("failed to declare comment topology,err: %v", err)
-		return
-	}
-}
-
-func initPopularityMQ(ctx context.Context, mq *data.RabbitMQClient) *rmq.Publisher {
-	if mq == nil {
-		return nil
-	}
-	topoCtx, cancel := context.WithTimeout(ctx, time.Second*5)
-	defer cancel()
-	if err := mq.DeclarePopularityTopology(topoCtx); err != nil {
-		log.Printf("failed to declare comment topology,err: %v", err)
-		return nil
-	}
-	pub, err := mq.NewPopularityPublisher(topoCtx)
-	if err != nil {
-		log.Printf("failed to create comment publisher,err: %v", err)
+		log.Printf("failed to create %s publisher: %v", name, err)
 		return nil
 	}
 	return pub

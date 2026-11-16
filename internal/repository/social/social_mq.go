@@ -5,18 +5,16 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
-	"feedsystem/internal/data"
+	"feedsystem/internal/messaging"
 	"feedsystem/internal/model/account"
-
-	rmq "github.com/rabbitmq/rabbitmq-amqp-go-client/pkg/rabbitmqamqp"
 )
 
 // socialMQ 实现 service/social  的 SocialMQ 接口
 type socialMQ struct {
-	pub *rmq.Publisher
+	pub *messaging.Publisher
 }
 
-func NewSocialMQ(pub *rmq.Publisher) *socialMQ {
+func NewSocialMQ(pub *messaging.Publisher) *socialMQ {
 	return &socialMQ{pub: pub}
 }
 
@@ -31,7 +29,7 @@ func (m *socialMQ) PublishFollow(ctx context.Context, fanID, vloggerID uint) err
 		FollowerID: fanID,
 		VloggerID:  vloggerID,
 	}
-	return data.PublishJSON(ctx, m.pub, event)
+	return m.pub.PublishJSON(ctx, event)
 }
 
 // randHex 生成随机的n*2位16进制

@@ -5,6 +5,7 @@ import (
 	"context"
 	"feedsystem/internal/config"
 	"feedsystem/internal/data"
+	"feedsystem/internal/messaging"
 	"feedsystem/internal/repository/social"
 	"feedsystem/internal/repository/video"
 	"feedsystem/internal/worker"
@@ -13,8 +14,6 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
-
-	rmq "github.com/rabbitmq/rabbitmq-amqp-go-client/pkg/rabbitmqamqp"
 )
 
 func main() {
@@ -36,7 +35,7 @@ func main() {
 	defer rdb.Close()
 
 	// 连接MQ
-	mq, err := data.NewRabbitMQ(config.Conf.RabbitMQConfig)
+	mq, err := messaging.NewClient(config.Conf.RabbitMQConfig)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -45,16 +44,17 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// 声明rating 拓扑
-	topoCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	if err := mq.DeclareRatingTopology(topoCtx); err != nil {
-		log.Fatalf("failed to declare rating topology: %v", err)
+	// 声明拓扑
+	topoCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	if err := messaging.DeclareAll(topoCtx, mq); err != nil {
+		cancel()
+		log.Fatalf("failed to declare topology: %v", err)
 	}
+	cancel()
 
 	// 启动消费
 	ratingSeter := video.NewRatingRepo(DB, rdb)
-	worker.RunConsumer(ctx, mq, data.RatingQueue, worker.RatingHandler(ratingSeter))
+	messaging.RunConsumer(ctx, mq, messaging.RatingQueue, worker.RatingHandler(ratingSeter))
 
 	// 启动timeline
 	timelinePublisher := initTimelineMQ(ctx, mq)
@@ -62,30 +62,21 @@ func main() {
 	// outboxPoller 无论mq 是否可用都可以使用
 	worker.OutboxPoller(ctx, DB, rdb, timelinePublisher)
 	socialRepo := social.NewSocialRepo(DB)
-	if mq != nil && timelinePublisher != nil {
-		worker.RunConsumer(ctx, mq, data.TimelineQueue, worker.TimelineHandler(rdb, socialRepo))
-	}
-	// 声明comment 拓扑
-	if err := mq.DeclareCommentTopology(topoCtx); err != nil {
-		log.Fatalf("failed to declare comment topology: %v", err)
-	}
+	messaging.RunConsumer(ctx, mq, messaging.TimelineQueue, worker.TimelineHandler(rdb, socialRepo))
 
 	// 启动comment
 	commentWriter := video.NewCommentRepo(DB, rdb)
-	worker.RunConsumer(ctx, mq, data.CommentQueue, worker.CommentHandler(commentWriter))
+	messaging.RunConsumer(ctx, mq, messaging.CommentQueue, worker.CommentHandler(commentWriter))
 
 	// 启动popularity worker
-	if err := mq.DeclarePopularityTopology(topoCtx); err != nil {
-		log.Fatalf("failed to declare popularity topology: %v", err)
-	}
 	popularityCache := video.NewPopularityRepo(rdb)
-	worker.RunConsumer(ctx, mq, data.PopularityQueue, worker.PopularityHandler(popularityCache))
+	messaging.RunConsumer(ctx, mq, messaging.PopularityQueue, worker.PopularityHandler(popularityCache))
 
 	<-ctx.Done() // 阻塞等待 SIGINT/SIGTERM
 }
 
 // initTimelineMQ 声明拓扑并创建发布者；失败返回nil
-func initTimelineMQ(ctx context.Context, mq *data.RabbitMQClient) *rmq.Publisher {
+func initTimelineMQ(ctx context.Context, mq *messaging.Client) *messaging.Publisher {
 	if mq == nil {
 		return nil
 	}

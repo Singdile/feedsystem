@@ -4,10 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"feedsystem/internal/messaging"
 	"feedsystem/internal/model/video"
 	"log"
-
-	rmq "github.com/rabbitmq/rabbitmq-amqp-go-client/pkg/rabbitmqamqp"
 )
 
 type CommentWriter interface {
@@ -18,18 +17,18 @@ type CommentWriter interface {
 // CommentHandler 从commentMQ 中取出并消费comment事件，将comment操作落入数据库中
 // commentEvent 可能是publish，可能是 delete，需要判断后执行
 // at-least-once 消息一定会送达，只是可能会执行多次。保证多次重复的执行，效果和一次执行是一致的。
-func CommentHandler(repo CommentWriter) MQHandler {
-	return func(ctx context.Context, dc rmq.IDeliveryContext) error {
+func CommentHandler(repo CommentWriter) messaging.Handler {
+	return func(ctx context.Context, msg messaging.Message) error {
 		// 解析数据
 		var event video.CommentEvent
-		if err := json.Unmarshal(dc.Message().GetData(), &event); err != nil { //无法解析，数据本身有问题，直接确认之后丢弃
-			_ = dc.Accept(ctx)
+		if err := json.Unmarshal(msg.Body(), &event); err != nil { //无法解析，数据本身有问题，直接确认之后丢弃
+			_ = msg.Accept(ctx)
 			return err
 		}
 
 		// 判断action
 		if event.Action != "delete" && event.Action != "publish" {
-			_ = dc.Accept(ctx)
+			_ = msg.Accept(ctx)
 			return errors.New("invalid action")
 		}
 
@@ -40,10 +39,10 @@ func CommentHandler(repo CommentWriter) MQHandler {
 
 			if err != nil {
 				log.Printf("comment delete 处理失败重试之后丢弃: %v", err)
-				_ = dc.Accept(ctx)
+				_ = msg.Accept(ctx)
 				return nil
 			}
-			return dc.Accept(ctx)
+			return msg.Accept(ctx)
 		}
 
 		// 组装
@@ -63,9 +62,9 @@ func CommentHandler(repo CommentWriter) MQHandler {
 
 		if err != nil {
 			log.Printf("comment 处理失败重试之后丢弃: %v", err)
-			_ = dc.Accept(ctx)
+			_ = msg.Accept(ctx)
 			return nil
 		}
-		return dc.Accept(ctx)
+		return msg.Accept(ctx)
 	}
 }

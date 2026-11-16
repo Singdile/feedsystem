@@ -3,19 +3,19 @@ package worker
 import (
 	"context"
 	"feedsystem/internal/data"
+	"feedsystem/internal/messaging"
 	"feedsystem/internal/model/feed"
 	"fmt"
 	"log"
 	"time"
 
-	rmq "github.com/rabbitmq/rabbitmq-amqp-go-client/pkg/rabbitmqamqp"
 	"gorm.io/gorm"
 )
 
 // OutboxPoller 将视频发布信息发送到redis的feed:global_timeline
 // 轮询 outbox_msgs(status=pending)：优先经 MQ 发布时间线事件；
 // MQ 不可用/发布失败时降级直写 Redis ZSET。内部 goroutine，1s 轮询。
-func OutboxPoller(ctx context.Context, db *gorm.DB, cache *data.RedisClient, pub *rmq.Publisher) {
+func OutboxPoller(ctx context.Context, db *gorm.DB, cache *data.RedisClient, pub *messaging.Publisher) {
 	go func() {
 		for {
 			select {
@@ -46,7 +46,7 @@ func OutboxPoller(ctx context.Context, db *gorm.DB, cache *data.RedisClient, pub
 
 				ok := false
 				if pub != nil {
-					if err := data.PublishJSON(ctx, pub, event); err != nil {
+					if err := pub.PublishJSON(ctx, event); err != nil {
 						log.Printf("outbox publish to mq failed,err: %v,now fallback to write redis directly", err)
 					} else {
 						ok = true

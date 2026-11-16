@@ -4,22 +4,21 @@ import (
 	"context"
 	"encoding/json"
 	"feedsystem/internal/data"
+	"feedsystem/internal/messaging"
 	"feedsystem/internal/model/feed"
 	"fmt"
 	"log"
-
-	rmq "github.com/rabbitmq/rabbitmq-amqp-go-client/pkg/rabbitmqamqp"
 )
 
 type fanLister interface {
 	ListFanIDs(ctx context.Context, vloggerID uint) ([]uint, error)
 }
 
-func TimelineHandler(cache *data.RedisClient, fans fanLister) MQHandler {
-	return func(ctx context.Context, dc rmq.IDeliveryContext) error {
+func TimelineHandler(cache *data.RedisClient, fans fanLister) messaging.Handler {
+	return func(ctx context.Context, msg messaging.Message) error {
 		var event feed.TimeLineEvent
-		if err := json.Unmarshal(dc.Message().GetData(), &event); err != nil {
-			_ = dc.Accept(ctx) // 解析失败，说明内容本身有问题，重试也是一样的，所以确认来删除，未来可以放置死信队列
+		if err := json.Unmarshal(msg.Body(), &event); err != nil {
+			_ = msg.Accept(ctx) // 解析失败，说明内容本身有问题，重试也是一样的，所以确认来删除，未来可以放置死信队列
 			return nil
 		}
 
@@ -35,10 +34,10 @@ func TimelineHandler(cache *data.RedisClient, fans fanLister) MQHandler {
 
 		if err != nil {
 			log.Printf("timeline 处理失败重试之后丢弃: %v", err)
-			_ = dc.Accept(ctx)
+			_ = msg.Accept(ctx)
 			return nil
 		}
-		return dc.Accept(ctx)
+		return msg.Accept(ctx)
 	}
 }
 

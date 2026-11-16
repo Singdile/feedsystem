@@ -5,13 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"feedsystem/internal/data"
+	"feedsystem/internal/messaging"
 	"feedsystem/internal/model/account"
 	"feedsystem/internal/model/video"
 	"log"
 	"regexp"
 	"time"
 
-	rmq "github.com/rabbitmq/rabbitmq-amqp-go-client/pkg/rabbitmqamqp"
 	"gorm.io/gorm"
 )
 
@@ -22,16 +22,16 @@ type NotificationHub interface {
 	Push(userID uint, n *account.Notification)
 }
 
-func NotificationHandler(db *gorm.DB, hub NotificationHub, cache *data.RedisClient) MQHandler {
-	return func(ctx context.Context, dc rmq.IDeliveryContext) error {
+func NotificationHandler(db *gorm.DB, hub NotificationHub, cache *data.RedisClient) messaging.Handler {
+	return func(ctx context.Context, msg messaging.Message) error {
 		// 解析事件数据
 		var header struct {
 			Action string `json:"action"`
 		}
 
-		data := dc.Message().GetData()
-		if err := json.Unmarshal(data, &header); err != nil {
-			_ = dc.Accept(ctx)
+		event := msg.Body()
+		if err := json.Unmarshal(event, &header); err != nil {
+			_ = msg.Accept(ctx)
 			return nil
 		}
 
@@ -51,17 +51,17 @@ func NotificationHandler(db *gorm.DB, hub NotificationHub, cache *data.RedisClie
 			}
 		}
 
-		processErr = process(header.Action, data)
+		processErr = process(header.Action, event)
 		// 重试三次
 		for i := 1; processErr != nil && i <= 3; i++ {
 			time.Sleep(time.Duration(1<<uint(i-1)) * time.Second)
-			processErr = process(header.Action, data)
+			processErr = process(header.Action, event)
 		}
 		if processErr != nil {
 			log.Printf("notification 处理失败(重试3次后丢弃): %v", processErr)
 		}
 
-		return dc.Accept(ctx)
+		return msg.Accept(ctx)
 	}
 }
 

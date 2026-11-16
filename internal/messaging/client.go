@@ -1,0 +1,65 @@
+package messaging
+
+import (
+	"context"
+	"feedsystem/internal/config"
+	"fmt"
+	"time"
+
+	rmq "github.com/rabbitmq/rabbitmq-amqp-go-client/pkg/rabbitmqamqp"
+)
+
+// Client 封装 RabbitMQ 连接
+type Client struct {
+	env  *rmq.Environment
+	conn *rmq.AmqpConnection
+}
+
+func NewClient(conf config.RabbitMQConfig) (*Client, error) {
+	brokerURI := fmt.Sprintf("amqp://%s:%s@%s:%d/", conf.Username, conf.Password, conf.Host, conf.Port)
+	env := rmq.NewEnvironment(brokerURI, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	conn, err := env.NewConnection(ctx) //马上建立连接
+	if err != nil {
+		return nil, err
+	}
+
+	return &Client{
+		env:  env,
+		conn: conn,
+	}, nil
+}
+
+func (c *Client) newPublisher(ctx context.Context, exchange, routingKey string) (*Publisher, error) {
+	addr := rmq.ExchangeAddress{Exchange: exchange, Key: routingKey}
+	pub, err := c.conn.NewPublisher(ctx, &addr, nil)
+	if err != nil {
+		return nil, err
+	}
+	return &Publisher{pub: pub}, nil
+}
+
+func (c *Client) newConsumer(ctx context.Context, queueName string) (*rmq.Consumer, error) {
+	return c.conn.NewConsumer(ctx, queueName, nil)
+}
+
+func (c *Client) NewTimelinePublisher(ctx context.Context) (*Publisher, error) {
+	return c.newPublisher(ctx, TimelineExchange, TimelinePublishRK)
+}
+
+func (c *Client) NewRatingPublisher(ctx context.Context) (*Publisher, error) {
+	return c.newPublisher(ctx, RatingExchange, RatingPublishRK)
+}
+
+func (c *Client) NewCommentPublisher(ctx context.Context) (*Publisher, error) {
+	return c.newPublisher(ctx, CommentExchange, CommentPublishRK)
+}
+
+func (c *Client) NewSocialPublisher(ctx context.Context) (*Publisher, error) {
+	return c.newPublisher(ctx, SocialExchange, SocialPublishRK)
+}
+
+func (c *Client) NewPopularityPublisher(ctx context.Context) (*Publisher, error) {
+	return c.newPublisher(ctx, PopularityExchange, PopularityPublishRK)
+}
