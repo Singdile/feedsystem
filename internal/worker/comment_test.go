@@ -7,7 +7,6 @@ import (
 	"feedsystem/internal/model/video"
 	"testing"
 
-	"github.com/Azure/go-amqp"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -73,7 +72,6 @@ func TestCommentHandle(t *testing.T) {
 		setup        func(writer *MockCommentWriter) //设置
 		wantErr      bool
 		wantAccepted bool //预期
-		wantRequeued bool //预期
 	}{
 		{
 			Name: "success publish",
@@ -83,7 +81,6 @@ func TestCommentHandle(t *testing.T) {
 			},
 			wantErr:      false,
 			wantAccepted: true,
-			wantRequeued: false,
 		},
 		{
 			Name: "success delete",
@@ -93,7 +90,6 @@ func TestCommentHandle(t *testing.T) {
 			},
 			wantErr:      false,
 			wantAccepted: true,
-			wantRequeued: false,
 		},
 		{
 			Name: "fail publish",
@@ -103,7 +99,6 @@ func TestCommentHandle(t *testing.T) {
 			},
 			wantErr:      false,
 			wantAccepted: true,
-			wantRequeued: false,
 		},
 		{
 			Name: "fail delete",
@@ -113,7 +108,6 @@ func TestCommentHandle(t *testing.T) {
 			},
 			wantErr:      false,
 			wantAccepted: true,
-			wantRequeued: false,
 		},
 		{
 			Name: "fail delete cuz wrong data",
@@ -123,7 +117,6 @@ func TestCommentHandle(t *testing.T) {
 			},
 			wantErr:      true,
 			wantAccepted: true,
-			wantRequeued: false,
 		},
 		{
 			Name: "fail publish cuz wrong data",
@@ -133,14 +126,12 @@ func TestCommentHandle(t *testing.T) {
 			},
 			wantErr:      true,
 			wantAccepted: true,
-			wantRequeued: false,
 		},
 		{
 			Name:         "unkown action",
 			body:         bodys[2],
 			wantErr:      true,
 			wantAccepted: true,
-			wantRequeued: false,
 		},
 	}
 
@@ -150,16 +141,15 @@ func TestCommentHandle(t *testing.T) {
 			if tt.setup != nil {
 				tt.setup(&mockRepo)
 			}
-			dc := &FakeIDeliveryContext{msg: amqp.NewMessage(tt.body)}
-			err := CommentHandler(&mockRepo)(context.Background(), dc)
+			msg := &fakeMessage{body: tt.body}
+			err := CommentHandler(&mockRepo)(context.Background(), msg)
 
 			if tt.wantErr {
 				require.Error(t, err)
 			} else {
 				require.NoError(t, err)
 			}
-			require.Equal(t, tt.wantAccepted, dc.accepted)
-			require.Equal(t, tt.wantRequeued, dc.requeued)
+			require.Equal(t, tt.wantAccepted, msg.accepted)
 		})
 	}
 }

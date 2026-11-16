@@ -4,11 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"feedsystem/internal/messaging"
 	"feedsystem/internal/model/video"
 	"testing"
-	"time"
 
-	"github.com/Azure/go-amqp"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -22,41 +21,20 @@ func (m *MockRatingSetter) SetRating(ctx context.Context, videoID, accountID uin
 	return args.Error(0)
 }
 
-type FakeIDeliveryContext struct {
-	msg      *amqp.Message
+// fakeMessage 是 messaging.Message 的测试实现，用来替代真实的 AMQP delivery
+type fakeMessage struct {
+	body     []byte
 	accepted bool
-	requeued bool
 }
 
-func (dc *FakeIDeliveryContext) Message() *amqp.Message {
-	return dc.msg
-}
+func (m *fakeMessage) Body() []byte { return m.body }
 
-func (dc *FakeIDeliveryContext) Accept(ctx context.Context) error {
-	dc.accepted = true
+func (m *fakeMessage) Accept(ctx context.Context) error {
+	m.accepted = true
 	return nil
 }
 
-func (dc *FakeIDeliveryContext) Discard(ctx context.Context, e *amqp.Error) error {
-	return nil
-}
-
-func (dc *FakeIDeliveryContext) DiscardWithAnnotations(ctx context.Context, annotations amqp.Annotations) error {
-	return nil
-}
-func (dc *FakeIDeliveryContext) Requeue(ctx context.Context) error {
-	dc.requeued = true
-	return nil
-}
-func (dc *FakeIDeliveryContext) RequeueWithAnnotations(ctx context.Context, annotations amqp.Annotations) error {
-	return nil
-}
-func (dc *FakeIDeliveryContext) RequeueWithAnnotationsAndDeliveryFailed(ctx context.Context, annotations amqp.Annotations, deliveryFailed bool) error {
-	return nil
-}
-func (dc *FakeIDeliveryContext) DelayRetry(ctx context.Context, delay time.Duration, deliveryFailed bool) error {
-	return nil
-}
+var _ messaging.Message = (*fakeMessage)(nil)
 
 // TestRatingHandler 测试RatingHandler的运行逻辑是否正确
 func TestRatingHandler(t *testing.T) {
@@ -73,33 +51,31 @@ func TestRatingHandler(t *testing.T) {
 		setup         func(*MockRatingSetter) //设置
 		wantErr       bool                    //预期
 		wantAccepted  bool                    //预期
-		wantRequeued  bool                    //预期
 		wantSetRating bool                    //预期
 	}{
-		{"合法like", likeBody, func(m *MockRatingSetter) { m.On("SetRating", mock.Anything, uint(1), uint(1), int8(1)).Return(nil) }, false, true, false, true},
-		{"JSON非法", []byte("not-json"), func(m *MockRatingSetter) {}, false, true, false, false},
-		{"action非法", []byte(`{"action":"praise","account_id":1,"video_id":3}`), func(m *MockRatingSetter) {}, false, true, false, false},
+		{"合法like", likeBody, func(m *MockRatingSetter) { m.On("SetRating", mock.Anything, uint(1), uint(1), int8(1)).Return(nil) }, false, true, true},
+		{"JSON非法", []byte("not-json"), func(m *MockRatingSetter) {}, false, true, false},
+		{"action非法", []byte(`{"action":"praise","account_id":1,"video_id":3}`), func(m *MockRatingSetter) {}, false, true, false},
 		{"SetRating失败 → 重试3次后Accept丢弃", likeBody, func(m *MockRatingSetter) {
 			m.On("SetRating", mock.Anything, uint(1), uint(1), int8(1)).Return(errors.New("db down"))
 		},
-			false, true, false, true},
+			false, true, true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			repo := new(MockRatingSetter)
 			tt.setup(repo)
-			dc := &FakeIDeliveryContext{msg: amqp.NewMessage(tt.body)}
+			msg := &fakeMessage{body: tt.body}
 
-			err := RatingHandler(repo)(context.Background(), dc)
+			err := RatingHandler(repo)(context.Background(), msg)
 
 			if tt.wantErr {
 				require.Error(t, err)
 			} else {
 				require.NoError(t, err)
 			}
-			require.Equal(t, tt.wantAccepted, dc.accepted) // ← 断言 settle
-			require.Equal(t, tt.wantRequeued, dc.requeued)
+			require.Equal(t, tt.wantAccepted, msg.accepted) // ← 断言 settle
 
 			if tt.wantSetRating {
 				repo.AssertExpectations(t)
