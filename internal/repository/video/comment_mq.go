@@ -34,7 +34,13 @@ func (mq *commentMQ) Publish(ctx context.Context, c *video.Comment) error {
 		Content:    c.Content,
 		OccurredAt: time.Now(),
 	}
-	return mq.pub.PublishJSON(ctx, event)
+	envelope, err := messaging.NewEnvelopeAt(event.EventID, messaging.EventTypeComment,
+		messaging.CurrentEventVersion, event.OccurredAt, event)
+	if err != nil {
+		return err
+	}
+
+	return mq.pub.Publish(ctx, envelope)
 }
 func (mq *commentMQ) Delete(ctx context.Context, commentID uint) error {
 	if mq == nil || mq.pub == nil {
@@ -47,5 +53,10 @@ func (mq *commentMQ) Delete(ctx context.Context, commentID uint) error {
 		CommentID:  commentID,
 		OccurredAt: time.Now(),
 	}
-	return mq.pub.PublishJSON(ctx, event)
+	envelope, err := messaging.NewEnvelopeAt(event.EventID, messaging.EventTypeComment,
+		messaging.CurrentEventVersion, event.OccurredAt, event)
+	if err != nil {
+		return err
+	}
+	return mq.pub.Publish(ctx, envelope)
 }

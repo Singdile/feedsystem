@@ -26,5 +26,11 @@ func (m *popularityMQ) UpdatePopularity(ctx context.Context, videoID uint, chang
 		Change:  int64(change),
 	}
 
-	return m.pub.PublishJSON(ctx, msg)
+	envelope, err := messaging.NewEnvelope(msg.EventID, messaging.EventTypePopularity,
+		messaging.CurrentEventVersion, msg)
+	if err != nil {
+		return err
+	}
+
+	return m.pub.Publish(ctx, envelope)
 }

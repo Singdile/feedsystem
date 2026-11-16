@@ -2,7 +2,6 @@ package worker
 
 import (
 	"context"
-	"encoding/json"
 	"feedsystem/internal/data"
 	"feedsystem/internal/messaging"
 	"feedsystem/internal/model/feed"
@@ -17,14 +16,15 @@ type fanLister interface {
 func TimelineHandler(cache *data.RedisClient, fans fanLister) messaging.Handler {
 	return func(ctx context.Context, msg messaging.Message) error {
 		var event feed.TimeLineEvent
-		if err := json.Unmarshal(msg.Body(), &event); err != nil {
-			_ = msg.Accept(ctx) // 解析失败，说明内容本身有问题，重试也是一样的，所以确认来删除，未来可以放置死信队列
-			return nil
+		err := messaging.DecodeEvent(msg.Body(), messaging.EventTypeTimeline, &event)
+		if err != nil {
+			_ = msg.Accept(ctx)
+			return err
 		}
 
 		// msg ok, but write not ok. retry
 		// 写全局时间线; 扇出到分析关注流
-		err := retryWithBackOff(3, func() error {
+		err = retryWithBackOff(3, func() error {
 			if err := writeTimeline(ctx, cache, event); err != nil {
 				return err
 			}

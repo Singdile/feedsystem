@@ -2,7 +2,6 @@ package worker
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"feedsystem/internal/messaging"
 	"feedsystem/internal/model/video"
@@ -21,7 +20,7 @@ func CommentHandler(repo CommentWriter) messaging.Handler {
 	return func(ctx context.Context, msg messaging.Message) error {
 		// 解析数据
 		var event video.CommentEvent
-		if err := json.Unmarshal(msg.Body(), &event); err != nil { //无法解析，数据本身有问题，直接确认之后丢弃
+		if err := messaging.DecodeEvent(msg.Body(), messaging.EventTypeComment, &event); err != nil {
 			_ = msg.Accept(ctx)
 			return err
 		}

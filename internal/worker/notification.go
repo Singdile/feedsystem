@@ -24,13 +24,29 @@ type NotificationHub interface {
 
 func NotificationHandler(db *gorm.DB, hub NotificationHub, cache *data.RedisClient) messaging.Handler {
 	return func(ctx context.Context, msg messaging.Message) error {
+		env, err := messaging.UnmarshalEnvelope(msg.Body())
+		if err != nil {
+			log.Printf("notification: drop invalid envelope: %v", err)
+			_ = msg.Accept(ctx)
+			return nil
+		}
+
+		// 通知队列消费 rating / comment / social 三类事件
+		switch env.Type {
+		case messaging.EventTypeRating, messaging.EventTypeComment, messaging.EventTypeSocial:
+		default:
+			log.Printf("notification: drop unexpected event type: %q", env.Type)
+			_ = msg.Accept(ctx)
+			return nil
+		}
+
 		// 解析事件数据
+		payload := env.Payload
 		var header struct {
 			Action string `json:"action"`
 		}
 
-		event := msg.Body()
-		if err := json.Unmarshal(event, &header); err != nil {
+		if err := json.Unmarshal(payload, &header); err != nil {
 			_ = msg.Accept(ctx)
 			return nil
 		}
@@ -38,24 +54,25 @@ func NotificationHandler(db *gorm.DB, hub NotificationHub, cache *data.RedisClie
 		// 处理事件
 		var processErr error
 
-		process := func(action string, data []byte) error {
-			switch action {
+		process := func() error {
+			switch header.Action {
 			case "like":
-				return processLike(ctx, db, cache, hub, data) // todo: 处理like
+				return processLike(ctx, db, cache, hub, payload) // todo: 处理like
 			case "publish":
-				return processPublish(ctx, db, cache, hub, data)
+				return processPublish(ctx, db, cache, hub, payload)
 			case "follow":
-				return processFollow(ctx, db, cache, hub, data)
+				return processFollow(ctx, db, cache, hub, payload)
 			default:
+				// delete / dislike / none 等事件不产生通知，静默跳过
 				return nil
 			}
 		}
 
-		processErr = process(header.Action, event)
+		processErr = process()
 		// 重试三次
 		for i := 1; processErr != nil && i <= 3; i++ {
 			time.Sleep(time.Duration(1<<uint(i-1)) * time.Second)
-			processErr = process(header.Action, event)
+			processErr = process()
 		}
 		if processErr != nil {
 			log.Printf("notification 处理失败(重试3次后丢弃): %v", processErr)

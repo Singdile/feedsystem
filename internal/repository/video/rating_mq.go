@@ -31,7 +31,13 @@ func (m *ratingMQ) PublishRating(ctx context.Context, action string, accountID, 
 		OccurredAt: time.Now(),
 	}
 
-	return m.pub.PublishJSON(ctx, msg)
+	envelope, err := messaging.NewEnvelopeAt(msg.EventID, messaging.EventTypeRating,
+		messaging.CurrentEventVersion, msg.OccurredAt, msg)
+	if err != nil {
+		return err
+	}
+
+	return m.pub.Publish(ctx, envelope)
 }
 
 // randHex 生成随机的n*2位16进制

@@ -29,7 +29,13 @@ func (m *socialMQ) PublishFollow(ctx context.Context, fanID, vloggerID uint) err
 		FollowerID: fanID,
 		VloggerID:  vloggerID,
 	}
-	return m.pub.PublishJSON(ctx, event)
+
+	envelope, err := messaging.NewEnvelope(event.EventID, messaging.EventTypeSocial,
+		messaging.CurrentEventVersion, event)
+	if err != nil {
+		return err
+	}
+	return m.pub.Publish(ctx, envelope)
 }
 
 // randHex 生成随机的n*2位16进制

@@ -46,7 +46,11 @@ func OutboxPoller(ctx context.Context, db *gorm.DB, cache *data.RedisClient, pub
 
 				ok := false
 				if pub != nil {
-					if err := pub.PublishJSON(ctx, event); err != nil {
+					envelope, err := messaging.NewEnvelopeAt(event.EventID, messaging.EventTypeTimeline,
+						messaging.CurrentEventVersion, event.OccurredAt, event)
+					if err != nil {
+						log.Printf("outbox build timeline envelope failed: %v", err)
+					} else if err := pub.Publish(ctx, envelope); err != nil {
 						log.Printf("outbox publish to mq failed,err: %v,now fallback to write redis directly", err)
 					} else {
 						ok = true

@@ -2,7 +2,6 @@ package worker
 
 import (
 	"context"
-	"encoding/json"
 	"feedsystem/internal/messaging"
 	"feedsystem/internal/model/video"
 	"time"
@@ -17,9 +16,9 @@ func PopularityHandler(cache cacheSetter) messaging.Handler {
 	return func(ctx context.Context, msg messaging.Message) error {
 		var popularityEvent video.PopularityEvent
 		// 从mq中取出数据并反序列化
-		if err := json.Unmarshal(msg.Body(), &popularityEvent); err != nil {
+		if err := messaging.DecodeEvent(msg.Body(), messaging.EventTypePopularity, &popularityEvent); err != nil {
 			_ = msg.Accept(ctx) // 解析失败，说明内容本身有问题，重试也是一样的，所以确认来删除，未来可以放置死信队列
-			return nil
+			return err
 		}
 
 		// 调用cache进行写操作
