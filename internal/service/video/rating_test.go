@@ -15,8 +15,8 @@ import (
 // 查询测试只替换存储依赖，不涉及真实数据库、Redis、MQ 或热度更新。
 type ratingTestRepo struct{ mock.Mock }
 
-func (r *ratingTestRepo) SetRating(ctx context.Context, videoID, accountID uint, status int8) error {
-	return r.Called(ctx, videoID, accountID, status).Error(0)
+func (r *ratingTestRepo) SetRating(ctx context.Context, videoID, accountID uint, status int8, version int64) error {
+	return r.Called(ctx, videoID, accountID, status, version).Error(0)
 }
 
 func (r *ratingTestRepo) GetRating(ctx context.Context, videoID, accountID uint) (int8, error) {
@@ -48,9 +48,28 @@ func (c *ratingTestCache) GetRatingCache(ctx context.Context, accountID uint, vi
 	return statuses, args.Error(1)
 }
 
+func (c *ratingTestCache) NextRatingVersion(ctx context.Context, videoID, accountID uint) (int64, error) {
+	args := c.Called(ctx, videoID, accountID)
+	return args.Get(0).(int64), args.Error(1)
+}
+
+type ratingTestMQ struct{ mock.Mock }
+
+func (m *ratingTestMQ) PublishRating(ctx context.Context, action string, accountID, videoID uint, version int64) error {
+	return m.Called(ctx, action, accountID, videoID, version).Error(0)
+}
+
+type ratingTestPopularity struct{ mock.Mock }
+
+func (m *ratingTestPopularity) UpdatePopularity(ctx context.Context, videoID uint, change float64) error {
+	return m.Called(ctx, videoID, change).Error(0)
+}
+
 var (
-	_ RateRepo    = (*ratingTestRepo)(nil)
-	_ RatingCache = (*ratingTestCache)(nil)
+	_ RateRepo     = (*ratingTestRepo)(nil)
+	_ RatingCache  = (*ratingTestCache)(nil)
+	_ RatingMQ     = (*ratingTestMQ)(nil)
+	_ PopularityMQ = (*ratingTestPopularity)(nil)
 )
 
 func newRatingQueryTest(t *testing.T, useCache bool) (*RatingService, *ratingTestRepo, *ratingTestCache) {
@@ -198,4 +217,119 @@ func TestRatingServiceQueryInvalidParameters(t *testing.T) {
 			require.Empty(t, cache.Calls, "非法输入不应访问缓存")
 		})
 	}
+}
+
+// newRatingWriteTest 构造同时具备仓储、缓存、MQ、热度依赖的评分服务
+func newRatingWriteTest(t *testing.T) (*RatingService, *ratingTestRepo, *ratingTestCache, *ratingTestMQ, *ratingTestPopularity) {
+	t.Helper()
+
+	repo := &ratingTestRepo{}
+	repo.Test(t)
+	t.Cleanup(func() { repo.AssertExpectations(t) })
+
+	cache := &ratingTestCache{}
+	cache.Test(t)
+	t.Cleanup(func() { cache.AssertExpectations(t) })
+
+	mq := &ratingTestMQ{}
+	mq.Test(t)
+	t.Cleanup(func() { mq.AssertExpectations(t) })
+
+	pop := &ratingTestPopularity{}
+	pop.Test(t)
+	t.Cleanup(func() { pop.AssertExpectations(t) })
+
+	return NewRatingService(repo, nil, mq, pop, cache), repo, cache, mq, pop
+}
+
+func TestRatingServiceSetUserRating(t *testing.T) {
+	const (
+		accountID = uint(7)
+		videoID   = uint(10)
+		version   = int64(42)
+	)
+
+	versionErr := errors.New("redis unavailable")
+	mqErr := errors.New("mq unavailable")
+	dbErr := errors.New("db unavailable")
+
+	t.Run("取号失败时不写任何数据", func(t *testing.T) {
+		svc, repo, cache, mq, pop := newRatingWriteTest(t)
+		cache.On("NextRatingVersion", t.Context(), videoID, accountID).Return(int64(0), versionErr)
+
+		stat, err := svc.SetUserRating(t.Context(), accountID, videoID, videomodel.StatusLike)
+
+		require.ErrorIs(t, err, versionErr)
+		require.Zero(t, stat)
+		repo.AssertNotCalled(t, "SetRating", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+		mq.AssertNotCalled(t, "PublishRating", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+		pop.AssertNotCalled(t, "UpdatePopularity", mock.Anything, mock.Anything, mock.Anything)
+	})
+
+	t.Run("MQ 成功时不走降级路径", func(t *testing.T) {
+		svc, repo, cache, mq, pop := newRatingWriteTest(t)
+		cache.On("NextRatingVersion", t.Context(), videoID, accountID).Return(version, nil)
+		cache.On("UpdateRatingCache", t.Context(), accountID, videoID, videomodel.StatusLike).Return(nil)
+		mq.On("PublishRating", t.Context(), videomodel.StatusLikeStr, accountID, videoID, version).Return(nil)
+		pop.On("UpdatePopularity", t.Context(), videoID, float64(1)).Return(nil)
+
+		stat, err := svc.SetUserRating(t.Context(), accountID, videoID, videomodel.StatusLike)
+
+		require.NoError(t, err)
+		require.Equal(t, videomodel.StatusLike, stat)
+		repo.AssertNotCalled(t, "SetRating", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	})
+
+	t.Run("MQ 失败时带同一版本降级直写", func(t *testing.T) {
+		svc, repo, cache, mq, pop := newRatingWriteTest(t)
+		cache.On("NextRatingVersion", t.Context(), videoID, accountID).Return(version, nil)
+		cache.On("UpdateRatingCache", t.Context(), accountID, videoID, videomodel.StatusLike).Return(nil)
+		mq.On("PublishRating", t.Context(), videomodel.StatusLikeStr, accountID, videoID, version).Return(mqErr)
+		repo.On("SetRating", t.Context(), videoID, accountID, videomodel.StatusLike, version).Return(nil)
+		pop.On("UpdatePopularity", t.Context(), videoID, float64(1)).Return(nil)
+
+		stat, err := svc.SetUserRating(t.Context(), accountID, videoID, videomodel.StatusLike)
+
+		require.NoError(t, err)
+		require.Equal(t, videomodel.StatusLike, stat)
+	})
+
+	t.Run("dislike 不增加热度", func(t *testing.T) {
+		svc, _, cache, mq, pop := newRatingWriteTest(t)
+		cache.On("NextRatingVersion", t.Context(), videoID, accountID).Return(version, nil)
+		cache.On("UpdateRatingCache", t.Context(), accountID, videoID, videomodel.StatusDislike).Return(nil)
+		mq.On("PublishRating", t.Context(), videomodel.StatusDislikeStr, accountID, videoID, version).Return(nil)
+
+		stat, err := svc.SetUserRating(t.Context(), accountID, videoID, videomodel.StatusDislike)
+
+		require.NoError(t, err)
+		require.Equal(t, videomodel.StatusDislike, stat)
+		pop.AssertNotCalled(t, "UpdatePopularity", mock.Anything, mock.Anything, mock.Anything)
+	})
+
+	t.Run("降级直写失败返回错误", func(t *testing.T) {
+		svc, repo, cache, mq, _ := newRatingWriteTest(t)
+		cache.On("NextRatingVersion", t.Context(), videoID, accountID).Return(version, nil)
+		cache.On("UpdateRatingCache", t.Context(), accountID, videoID, videomodel.StatusLike).Return(nil)
+		mq.On("PublishRating", t.Context(), videomodel.StatusLikeStr, accountID, videoID, version).Return(mqErr)
+		repo.On("SetRating", t.Context(), videoID, accountID, videomodel.StatusLike, version).Return(dbErr)
+
+		stat, err := svc.SetUserRating(t.Context(), accountID, videoID, videomodel.StatusLike)
+
+		require.ErrorIs(t, err, dbErr)
+		require.Zero(t, stat)
+	})
+
+	t.Run("更新读缓存失败不影响主流程", func(t *testing.T) {
+		svc, _, cache, mq, pop := newRatingWriteTest(t)
+		cache.On("NextRatingVersion", t.Context(), videoID, accountID).Return(version, nil)
+		cache.On("UpdateRatingCache", t.Context(), accountID, videoID, videomodel.StatusLike).Return(errors.New("cache down"))
+		mq.On("PublishRating", t.Context(), videomodel.StatusLikeStr, accountID, videoID, version).Return(nil)
+		pop.On("UpdatePopularity", t.Context(), videoID, float64(1)).Return(nil)
+
+		stat, err := svc.SetUserRating(t.Context(), accountID, videoID, videomodel.StatusLike)
+
+		require.NoError(t, err)
+		require.Equal(t, videomodel.StatusLike, stat)
+	})
 }

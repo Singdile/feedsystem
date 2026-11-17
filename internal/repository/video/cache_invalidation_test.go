@@ -53,7 +53,7 @@ func TestRatingRepo_SetRating_InvalidateCache(t *testing.T) {
 	require.True(t, mr.Exists(key))
 
 	// 执行用户对视频点赞
-	require.NoError(t, repo.SetRating(t.Context(), uint(1), uint(1), 1))
+	require.NoError(t, repo.SetRating(t.Context(), uint(1), uint(1), 1, 1))
 
 	// redis中的实体被删除了
 	require.False(t, mr.Exists(key))
@@ -78,7 +78,7 @@ func TestRatingRepo_SetRating_NoChange(t *testing.T) {
 	require.True(t, mr.Exists(key))
 
 	// 执行用户对视频点赞
-	require.NoError(t, repo.SetRating(t.Context(), uint(1), uint(1), 1))
+	require.NoError(t, repo.SetRating(t.Context(), uint(1), uint(1), 1, 1))
 	// redis中的实体被删除了
 	require.False(t, mr.Exists(key))
 
@@ -88,10 +88,42 @@ func TestRatingRepo_SetRating_NoChange(t *testing.T) {
 	require.True(t, mr.Exists(key))
 
 	// 再次执行相同的rating 操作，应该不影响cache
-	require.NoError(t, repo.SetRating(t.Context(), uint(1), uint(1), 1))
+	require.NoError(t, repo.SetRating(t.Context(), uint(1), uint(1), 1, 2))
 
 	// cache 中的实体不应该被删除
 	require.True(t, mr.Exists(key))
+}
+
+// 旧版本事件（乱序/重复）不应改动计数，也不应失效缓存
+func TestRatingRepo_SetRating_StaleVersionKeepsCache(t *testing.T) {
+	db := newTestDB(t)
+	cache, mr := newTestRedis(t)
+	repo := NewRatingRepo(db, cache)
+
+	seedVideo(t, db, video.Video{ID: 1, AuthorID: 1})
+
+	// 先应用 version=2 的点赞
+	require.NoError(t, repo.SetRating(t.Context(), uint(1), uint(1), 1, 2))
+
+	key := cache.Key("video:entity:%d", uint(1))
+	_, err := cache.Set(t.Context(), key, "stale_entity", time.Hour)
+	require.NoError(t, err)
+	require.True(t, mr.Exists(key))
+
+	// 再来一条 version=1 的旧事件：应被跳过
+	require.NoError(t, repo.SetRating(t.Context(), uint(1), uint(1), -1, 1))
+	require.True(t, mr.Exists(key))
+
+	// 状态仍为点赞
+	var vr video.VideoRating
+	require.NoError(t, db.Where("video_id = ? AND account_id = ?", uint(1), uint(1)).First(&vr).Error)
+	require.Equal(t, video.StatusLike, vr.Status)
+	require.Equal(t, int64(2), vr.Version)
+
+	var v video.Video
+	require.NoError(t, db.First(&v, uint(1)).Error)
+	require.Equal(t, uint(1), v.LikedCount)
+	require.Equal(t, uint(0), v.DislikedCount)
 }
 
 // 评论创建，删除 会使得cache中的视频实体缓存失效

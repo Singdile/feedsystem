@@ -16,15 +16,18 @@ type MockRatingSetter struct {
 	mock.Mock
 }
 
-func (m *MockRatingSetter) SetRating(ctx context.Context, videoID, accountID uint, status int8) error {
-	args := m.Called(ctx, videoID, accountID, status)
+func (m *MockRatingSetter) SetRating(ctx context.Context, videoID, accountID uint, status int8, version int64) error {
+	args := m.Called(ctx, videoID, accountID, status, version)
 	return args.Error(0)
 }
 
 // TestRatingHandler 测试RatingHandler的运行逻辑是否正确
 func TestRatingHandler(t *testing.T) {
+	const eventVersion = int64(7)
+
 	likeEvent := video.RatingEvent{
 		EventID:   "evt-rating-like",
+		Version:   eventVersion,
 		Action:    "like",
 		AccountID: 1,
 		VideoID:   1,
@@ -42,7 +45,7 @@ func TestRatingHandler(t *testing.T) {
 			name: "合法 like",
 			msg:  envelopeMessage(t, messaging.EventTypeRating, likeEvent),
 			setup: func(m *MockRatingSetter) {
-				m.On("SetRating", mock.Anything, uint(1), uint(1), int8(1)).Return(nil)
+				m.On("SetRating", mock.Anything, uint(1), uint(1), int8(1), eventVersion).Return(nil)
 			},
 			wantAccepted:  true,
 			wantSetRating: true,
@@ -63,6 +66,7 @@ func TestRatingHandler(t *testing.T) {
 			name: "action 非法",
 			msg: envelopeMessage(t, messaging.EventTypeRating, video.RatingEvent{
 				EventID:   "evt-rating-bad",
+				Version:   eventVersion,
 				Action:    "praise",
 				AccountID: 1,
 				VideoID:   3,
@@ -73,7 +77,22 @@ func TestRatingHandler(t *testing.T) {
 			name: "SetRating 失败 → 重试后 Accept 丢弃",
 			msg:  envelopeMessage(t, messaging.EventTypeRating, likeEvent),
 			setup: func(m *MockRatingSetter) {
-				m.On("SetRating", mock.Anything, uint(1), uint(1), int8(1)).Return(errors.New("db down"))
+				m.On("SetRating", mock.Anything, uint(1), uint(1), int8(1), eventVersion).
+					Return(errors.New("db down"))
+			},
+			wantAccepted:  true,
+			wantSetRating: true,
+		},
+		{
+			name: "老消息 version=0 也能落库",
+			msg: envelopeMessage(t, messaging.EventTypeRating, video.RatingEvent{
+				EventID:   "evt-rating-legacy",
+				Action:    "dislike",
+				AccountID: 2,
+				VideoID:   2,
+			}),
+			setup: func(m *MockRatingSetter) {
+				m.On("SetRating", mock.Anything, uint(2), uint(2), int8(-1), int64(0)).Return(nil)
 			},
 			wantAccepted:  true,
 			wantSetRating: true,
@@ -99,7 +118,7 @@ func TestRatingHandler(t *testing.T) {
 			if tt.wantSetRating {
 				repo.AssertExpectations(t)
 			} else {
-				repo.AssertNotCalled(t, "SetRating")
+				repo.AssertNotCalled(t, "SetRating", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 			}
 		})
 	}

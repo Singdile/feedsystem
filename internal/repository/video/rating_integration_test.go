@@ -5,6 +5,7 @@ import (
 	"feedsystem/internal/data"
 	"feedsystem/internal/model/video"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -256,13 +257,15 @@ func TestSetRating_StateChange(t *testing.T) {
 		},
 	}
 
+	const wantVersion = int64(2)
+
 	for _, tt := range tests {
 		t.Run(tt.Name, func(t *testing.T) {
 			// 首先先插入预设的videos表中的行,以及对应的video_ratings表中的行
 			seedVideo(t, db, tt.OriginVideo)
 			seedVideoRatings(t, db, tt.OriginVideoRating)
 			// 执行操作
-			err := repo.SetRating(t.Context(), tt.WantVideoRating.VideoID, tt.WantVideoRating.AccountID, tt.WantVideoRating.Status)
+			err := repo.SetRating(t.Context(), tt.WantVideoRating.VideoID, tt.WantVideoRating.AccountID, tt.WantVideoRating.Status, wantVersion)
 			require.NoError(t, err)
 
 			// 对操作结果进行断言
@@ -273,14 +276,122 @@ func TestSetRating_StateChange(t *testing.T) {
 			require.Equal(t, tt.WantVideo.LikedCount, v.LikedCount)
 			require.Equal(t, tt.WantVideo.DislikedCount, v.DislikedCount)
 
-			// 断言video_ratings 表数据的改动
+			// 断言video_ratings 表数据的改动：取消评价保留 tombstone（status=0），不删除行
 			var vr video.VideoRating
-			if tt.WantVideoRating.Status == int8(0) {
-				require.Error(t, db.Where("video_id = ? AND account_id = ?", tt.WantVideoRating.VideoID, tt.WantVideoRating.AccountID).First(&vr).Error)
-			} else {
-				require.NoError(t, db.Where("video_id = ? AND account_id = ?", tt.WantVideoRating.VideoID, tt.WantVideoRating.AccountID).First(&vr).Error)
-				require.Equal(t, tt.WantVideoRating.Status, vr.Status)
-			}
+			require.NoError(t, db.Where("video_id = ? AND account_id = ?", tt.WantVideoRating.VideoID, tt.WantVideoRating.AccountID).First(&vr).Error)
+			require.Equal(t, tt.WantVideoRating.Status, vr.Status)
+			require.Equal(t, wantVersion, vr.Version)
 		})
 	}
+}
+
+// TestSetRating_VersionSemantics 验证乱序/重复/取消后迟到事件/并发写入的最终一致性
+func TestSetRating_VersionSemantics(t *testing.T) {
+	db := newTestDB(t)
+	cache, _ := newTestRedis(t)
+	repo := NewRatingRepo(db, cache)
+
+	first := func(t *testing.T, videoID, accountID uint, status int8, version int64) {
+		t.Helper()
+		require.NoError(t, repo.SetRating(t.Context(), videoID, accountID, status, version))
+	}
+
+	assertRating := func(t *testing.T, videoID, accountID uint, wantStatus int8, wantVersion int64, wantLike, wantDislike uint) {
+		t.Helper()
+
+		var vr video.VideoRating
+		require.NoError(t, db.Where("video_id = ? AND account_id = ?", videoID, accountID).First(&vr).Error)
+		require.Equal(t, wantStatus, vr.Status)
+		require.Equal(t, wantVersion, vr.Version)
+
+		var v video.Video
+		require.NoError(t, db.First(&v, videoID).Error)
+		require.Equal(t, wantLike, v.LikedCount)
+		require.Equal(t, wantDislike, v.DislikedCount)
+	}
+
+	t.Run("乱序事件只接受较新版本", func(t *testing.T) {
+		seedVideo(t, db, video.Video{ID: 10, AuthorID: 10})
+
+		first(t, 10, 10, video.StatusDislike, 2) // 用户最后一次操作
+		first(t, 10, 10, video.StatusLike, 1)    // 迟到的旧事件，应被跳过
+
+		assertRating(t, 10, 10, video.StatusDislike, 2, 0, 1)
+	})
+
+	t.Run("重复投递不重复计数", func(t *testing.T) {
+		seedVideo(t, db, video.Video{ID: 11, AuthorID: 11})
+
+		for i := 0; i < 3; i++ {
+			first(t, 11, 11, video.StatusLike, 3)
+		}
+
+		assertRating(t, 11, 11, video.StatusLike, 3, 1, 0)
+	})
+
+	t.Run("取消评价后迟到的点赞不会复活", func(t *testing.T) {
+		seedVideo(t, db, video.Video{ID: 12, AuthorID: 12})
+
+		first(t, 12, 12, video.StatusLike, 4)
+		first(t, 12, 12, video.StatusNone, 5) // 取消：写 tombstone
+		first(t, 12, 12, video.StatusLike, 4) // 迟到的旧点赞
+
+		assertRating(t, 12, 12, video.StatusNone, 5, 0, 0)
+	})
+
+	t.Run("并发写入最终收敛到较大版本", func(t *testing.T) {
+		seedVideo(t, db, video.Video{ID: 13, AuthorID: 13})
+		// 先建立 tombstone 行，避免并发首次插入触发 gap lock 竞争
+		require.NoError(t, db.Create(&video.VideoRating{
+			VideoID: 13, AccountID: 13, Status: video.StatusNone, Version: 0,
+		}).Error)
+
+		var wg sync.WaitGroup
+		errs := make([]error, 2)
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			errs[0] = repo.SetRating(t.Context(), 13, 13, video.StatusLike, 1)
+		}()
+		go func() {
+			defer wg.Done()
+			errs[1] = repo.SetRating(t.Context(), 13, 13, video.StatusDislike, 2)
+		}()
+		wg.Wait()
+
+		require.NoError(t, errs[0])
+		require.NoError(t, errs[1])
+		assertRating(t, 13, 13, video.StatusDislike, 2, 0, 1)
+	})
+}
+
+// TestNextRatingVersion_ReseedsFromDB 验证发号器丢失（TTL 过期 / Redis 重启）后从 DB 续号
+func TestNextRatingVersion_ReseedsFromDB(t *testing.T) {
+	db := newTestDB(t)
+	cache, mr := newTestRedis(t)
+	repo := NewRatingRepo(db, cache)
+
+	key := cache.Key("rating:ver:%d:%d", uint(1), uint(1))
+
+	v, err := repo.NextRatingVersion(t.Context(), 1, 1)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), v)
+
+	v, err = repo.NextRatingVersion(t.Context(), 1, 1)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), v)
+
+	// 模拟 TTL 过期 / Redis 丢数据：DB 已应用到 version=5
+	require.NoError(t, db.Create(&video.VideoRating{
+		VideoID: 1, AccountID: 1, Status: video.StatusLike, Version: 5,
+	}).Error)
+	mr.Del(key)
+
+	v, err = repo.NextRatingVersion(t.Context(), 1, 1)
+	require.NoError(t, err)
+	require.Equal(t, int64(6), v, "发号器应基于 DB 的 version 续号，而不是从 1 重新开始")
+
+	v, err = repo.NextRatingVersion(t.Context(), 1, 1)
+	require.NoError(t, err)
+	require.Equal(t, int64(7), v)
 }
