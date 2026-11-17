@@ -8,7 +8,7 @@ import (
 )
 
 type ratingSetter interface {
-	SetRating(ctx context.Context, videoID, accountID uint, status int8) error
+	SetRating(ctx context.Context, videoID, accountID uint, status int8, version int64) error
 }
 
 // RatingHandler 从ratingMQ 中取出并消费rating事件，将rating操作落入数据库中(更新video_ratings 和 videos rating count)
@@ -30,7 +30,7 @@ func RatingHandler(repo ratingSetter) messaging.Handler {
 		}
 
 		err = retryWithBackOff(3, func() error {
-			return repo.SetRating(ctx, ratingEvent.VideoID, ratingEvent.AccountID, stat)
+			return repo.SetRating(ctx, ratingEvent.VideoID, ratingEvent.AccountID, stat, ratingEvent.Version)
 		})
 
 		if err != nil {

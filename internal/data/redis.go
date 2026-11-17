@@ -364,3 +364,19 @@ func (c *RedisClient) ZAddFanout(ctx context.Context, member feed.ZMember, fanID
 	_, err := pipe.Exec(ctx)
 	return err
 }
+
+// IncrFrom 原子地保证返回值严格递增且不小于 seed
+// 当 key 不存在或者当前值小于 seed 时，先把计数器抬到 seed，再 INCR
+func (c *RedisClient) IncrFrom(ctx context.Context, key string, seed int64, ttl time.Duration) (int64, error) {
+	script := redis.NewScript(`
+local cur = redis.call('GET', KEYS[1])
+if (not cur) or (tonumber(cur) < tonumber(ARGV[1])) then
+redis.call('SET',KEYS[1],ARGV[1])
+end
+local v = redis.call('INCR',KEYS[1])
+redis.call('PEXPIRE',KEYS[1],ARGV[2])
+return v
+`)
+
+	return script.Run(ctx, c.rdb, []string{key}, seed, ttl.Milliseconds()).Int64()
+}

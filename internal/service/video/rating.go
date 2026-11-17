@@ -2,6 +2,7 @@ package video
 
 import (
 	"context"
+	"errors"
 	"feedsystem/internal/model/video"
 	apperrors "feedsystem/internal/pkg/errors"
 	"log"
@@ -10,7 +11,7 @@ import (
 
 // RateRepo 负责video_ratings的操作(DB)
 type RateRepo interface {
-	SetRating(ctx context.Context, videoID, accountID uint, stauts int8) error
+	SetRating(ctx context.Context, videoID, accountID uint, stauts int8, version int64) error
 	GetRating(ctx context.Context, videoID, accountID uint) (int8, error)
 	GetRatings(ctx context.Context, videoID []uint, accountID uint) (map[uint]int8, error)
 	ListLikedVideos(ctx context.Context, accountID uint, cursorStr *video.Cursor, limit int) ([]video.Video, error)
@@ -20,11 +21,12 @@ type RateRepo interface {
 type RatingCache interface {
 	UpdateRatingCache(ctx context.Context, accountID, videID uint, status int8) error
 	GetRatingCache(ctx context.Context, accountID uint, videoIDs ...uint) ([]int8, error)
+	NextRatingVersion(ctx context.Context, videoID, accoutID uint) (int64, error)
 }
 
 // RatingMQ 发送 Rating 事件到MQ
 type RatingMQ interface {
-	PublishRating(ctx context.Context, action string, accountID, videoID uint) error
+	PublishRating(ctx context.Context, action string, accountID, videoID uint, version int64) error
 }
 
 type PopularityMQ interface {
@@ -59,17 +61,24 @@ func (s *RatingService) SetUserRating(ctx context.Context, accountID, videoID ui
 		return 0, apperrors.NewAppError(http.StatusBadRequest, "参数错误")
 	}
 
+	// rating 取号
+	if s.RatingCache == nil {
+		return 0, errors.New("rating: version generator unavailable")
+	}
+	version, err := s.RatingCache.NextRatingVersion(ctx, videoID, accountID)
+	if err != nil {
+		return 0, err
+	}
+
 	// 更新cache缓存中的用户评价
-	if s.RatingCache != nil {
-		if err := s.RatingCache.UpdateRatingCache(ctx, accountID, videoID, status); err != nil {
-			log.Printf("update rating cache failed: %v \n", err)
-		}
+	if err := s.RatingCache.UpdateRatingCache(ctx, accountID, videoID, status); err != nil {
+		log.Printf("update rating cache failed: %v \n", err)
 	}
 
 	// 正常路径：发送信息到mq
 	if s.MQ != nil {
-		if err := s.MQ.PublishRating(ctx, video.StatusToString(status), accountID, videoID); err == nil {
-			if status == video.StatusLike {
+		if err := s.MQ.PublishRating(ctx, video.StatusToString(status), accountID, videoID, version); err == nil {
+			if status == video.StatusLike && s.PopularityMQ != nil {
 				s.PopularityMQ.UpdatePopularity(ctx, videoID, 1)
 			}
 			return status, nil // 信息发送成功
@@ -77,14 +86,14 @@ func (s *RatingService) SetUserRating(ctx context.Context, accountID, videoID ui
 	}
 
 	// 降级路径：直接DB写操作
-	err = s.RateRepo.SetRating(ctx, videoID, accountID, status)
+	err = s.RateRepo.SetRating(ctx, videoID, accountID, status, version)
 	if err != nil {
 		return 0, err
 	}
 
 	stat = status
 	// 如果rating 是 like，则增加热度
-	if status == video.StatusLike {
+	if status == video.StatusLike && s.PopularityMQ != nil {
 		s.PopularityMQ.UpdatePopularity(ctx, videoID, 1)
 	}
 	return stat, err

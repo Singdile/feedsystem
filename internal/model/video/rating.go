@@ -10,6 +10,7 @@ type VideoRating struct {
 	VideoID   uint      `gorm:"primaryKey" json:"video_id"`
 	AccountID uint      `gorm:"primaryKey" json:"account_id"`
 	Status    int8      `gorm:"default 0" json:"status"`
+	Version   int64     `gorm:"not null;default:0" json:"version"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -53,6 +54,7 @@ func StringToStatus(action string) (int8, error) {
 // RatingEvent 发送到mq中的rating事件
 type RatingEvent struct {
 	EventID    string    `json:"event_id"`
+	Version    int64     `json:"version"`
 	Action     string    `json:"action"`
 	AccountID  uint      `json:"account_id"`
 	VideoID    uint      `json:"video_id"`

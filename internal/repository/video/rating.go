@@ -9,9 +9,13 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
-const ratingCacheTTL = 7 * 24 * time.Hour
+const (
+	ratingCacheTTL   = 7 * 24 * time.Hour
+	ratingVersionTTL = 7 * 24 * time.Hour
+)
 
 type ratingRepo struct {
 	db    *gorm.DB
@@ -23,65 +27,53 @@ func NewRatingRepo(db *gorm.DB, cache *data.RedisClient) *ratingRepo {
 }
 
 // SetRating 设置video_ratings （幂等性设置）,同步更新videos里的计数信息
-// 只需要记录状态为like 和 dislike，未评价的直接删除
-func (r *ratingRepo) SetRating(ctx context.Context, videoID, accountID uint, status int8) error {
+// 只接受版本更新的操作；取消评价写入 status = 0
+func (r *ratingRepo) SetRating(ctx context.Context, videoID, accountID uint, status int8, version int64) error {
 	changed := false // 计数是否真正发生变更（幂等 no-op 不失效缓存）
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var cur video.VideoRating
-		// 读取当前状态
-		err := tx.Where("video_id = ? AND account_id = ?", videoID, accountID).First(&cur).Error
-		var oldStat int8
+		// 悲观锁,读取当前状态
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("video_id = ? AND account_id = ?", videoID, accountID).First(&cur).Error
 
-		if err == nil {
-			oldStat = cur.Status
-		} else if !errors.Is(err, gorm.ErrRecordNotFound) { // 非空以外的错误直接返回
+		notFound := errors.Is(err, gorm.ErrRecordNotFound)
+		if err != nil && !notFound { //操作出现错误，并且不是未查找到的错误
 			return err
 		}
 
-		// 设置状态
-		// 1. 原本未记录
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			if status == 0 {
-				return nil
-			} else {
-				err := tx.Model(&video.VideoRating{}).Create(&video.VideoRating{VideoID: videoID, AccountID: accountID, Status: status}).Error
-				if err != nil {
-					return err
-				}
-			}
-		}
-
-		// 2. 原本有记录，更新记录
-		if oldStat == status { //幂等性，多次一样的请求实现的最终效果是一样的
+		if !notFound && version <= cur.Version { //乱序，重复直接跳过 (幂等)
 			return nil
 		}
 
-		if status == 0 { // 取消评价，删除记录
-			err := tx.Where("video_id = ? AND account_id = ?", videoID, accountID).
-				Delete(&video.VideoRating{}).Error
-			if err != nil {
-				return err
-			}
-		} else { // 切换评价状态: update
-			err = tx.Model(&video.VideoRating{}).Where("video_id = ? AND account_id = ?", videoID, accountID).Update("status", status).Error
-			if err != nil {
-				return err
-			}
+		var oldStat int8
+		if !notFound {
+			oldStat = cur.Status
+		}
 
+		if notFound { // 首次记录
+			if err := tx.Create(&video.VideoRating{VideoID: videoID, AccountID: accountID, Status: status, Version: version}).Error; err != nil {
+				return err
+			}
+		} else { //更新记录
+			err := tx.Model(&video.VideoRating{}).Where("video_id = ? AND account_id = ?", videoID, accountID).Updates(map[string]any{"status": status, "version": version}).Error
+			if err != nil {
+				return err
+			}
 		}
 
 		// 同步更新video的 like_count disliked_count
 		deltaLike, deltaDislike := deltaCount(oldStat, status)
-		err = tx.Model(&video.Video{}).
-			Where("id = ?", videoID).
-			Updates(map[string]any{
-				"liked_count":    gorm.Expr("GREATEST(liked_count + ?,0)", deltaLike),
-				"disliked_count": gorm.Expr("GREATEST(disliked_count + ?,0)", deltaDislike),
-			}).Error
-		if err != nil {
-			return err
+		if deltaDislike != 0 || deltaLike != 0 {
+			err = tx.Model(&video.Video{}).
+				Where("id = ?", videoID).
+				Updates(map[string]any{
+					"liked_count":    gorm.Expr("GREATEST(liked_count + ?,0)", deltaLike),
+					"disliked_count": gorm.Expr("GREATEST(disliked_count + ?,0)", deltaDislike),
+				}).Error
+			if err != nil {
+				return err
+			}
+			changed = true // 计数已更新，才失效缓存
 		}
-		changed = true // 计数已更新，才失效缓存
 		return nil
 	})
 
@@ -89,7 +81,7 @@ func (r *ratingRepo) SetRating(ctx context.Context, videoID, accountID uint, sta
 		return err
 	}
 
-	if changed {
+	if changed && r.cache != nil {
 		if err := r.cache.Del(ctx, r.cache.Key("video:entity:%d", videoID)); err != nil {
 			log.Printf("failed to cache video:entity:%d", videoID)
 		}
@@ -104,13 +96,16 @@ func deltaCount(oldstat, newstat int8) (int8, int8) {
 	var likeOldVote int8
 	var dislikeOldVote int8
 
-	if oldstat == 1 {
+	switch oldstat {
+	case 1:
 		likeOldVote = 1
 		dislikeOldVote = 0
-	} else if oldstat == 0 {
+
+	case 0:
 		likeOldVote = 0
 		dislikeOldVote = 0
-	} else if oldstat == -1 {
+
+	case -1:
 		likeOldVote = 0
 		dislikeOldVote = 1
 	}
@@ -118,13 +113,16 @@ func deltaCount(oldstat, newstat int8) (int8, int8) {
 	// newVote
 	var likeNewVote int8
 	var dislikeNewVote int8
-	if newstat == 1 {
+	switch newstat {
+	case 1:
 		likeNewVote = 1
 		dislikeNewVote = 0
-	} else if newstat == 0 {
+
+	case 0:
 		likeNewVote = 0
 		dislikeNewVote = 0
-	} else if newstat == -1 {
+
+	case -1:
 		likeNewVote = 0
 		dislikeNewVote = 1
 	}
@@ -328,4 +326,33 @@ func (r *ratingRepo) GetRatingCache(ctx context.Context, accountID uint, videoID
 		}
 	}
 	return result, nil
+}
+
+// NextRatingVersion rating事件的发号器
+// 当 key 对应的 发号器有效，直接使用；当key 对应的发号器无效，从DB中使用seed重建
+func (r *ratingRepo) NextRatingVersion(ctx context.Context, videoID, accountID uint) (int64, error) {
+	if r.cache == nil {
+		return 0, errors.New("rating version: cache unavailable")
+	}
+
+	key := r.cache.Key("rating:ver:%d:%d", videoID, accountID)
+	exist, err := r.cache.Exists(ctx, key)
+	if err != nil {
+		return 0, err
+	}
+
+	var seed int64
+	if !exist { //需要重建
+		var cur video.VideoRating
+		err := r.db.WithContext(ctx).Select("version").Where("video_id = ? AND account_id = ?", videoID, accountID).First(&cur).Error
+		switch {
+		case errors.Is(err, gorm.ErrRecordNotFound):
+			seed = 0
+		case err != nil:
+			return 0, err
+		default:
+			seed = cur.Version
+		}
+	}
+	return r.cache.IncrFrom(ctx, key, seed, ratingVersionTTL)
 }

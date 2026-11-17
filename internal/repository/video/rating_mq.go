@@ -19,12 +19,13 @@ func NewRatingMQ(pub *messaging.Publisher) *ratingMQ {
 	return &ratingMQ{pub: pub}
 }
 
-func (m *ratingMQ) PublishRating(ctx context.Context, action string, accountID, videoID uint) error {
+func (m *ratingMQ) PublishRating(ctx context.Context, action string, accountID, videoID uint, version int64) error {
 	if m == nil || m.pub == nil {
 		return errors.New("rating mq not initialized")
 	}
 	msg := video.RatingEvent{
 		EventID:    randHex(16),
+		Version:    version,
 		Action:     action,
 		AccountID:  accountID,
 		VideoID:    videoID,
