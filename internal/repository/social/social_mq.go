@@ -11,10 +11,10 @@ import (
 
 // socialMQ 实现 service/social  的 SocialMQ 接口
 type socialMQ struct {
-	pub *messaging.Publisher
+	pub messaging.Publisher
 }
 
-func NewSocialMQ(pub *messaging.Publisher) *socialMQ {
+func NewSocialMQ(pub messaging.Publisher) *socialMQ {
 	return &socialMQ{pub: pub}
 }
 

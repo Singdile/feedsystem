@@ -31,35 +31,35 @@ func NewClient(conf config.RabbitMQConfig) (*Client, error) {
 	}, nil
 }
 
-func (c *Client) newPublisher(ctx context.Context, exchange, routingKey string) (*Publisher, error) {
+func (c *Client) newPublisher(ctx context.Context, exchange, routingKey string) (Publisher, error) {
 	addr := rmq.ExchangeAddress{Exchange: exchange, Key: routingKey}
 	pub, err := c.conn.NewPublisher(ctx, &addr, nil)
 	if err != nil {
 		return nil, err
 	}
-	return &Publisher{pub: pub}, nil
+	return &rmqPublisher{pub: pub}, nil
 }
 
-func (c *Client) newConsumer(ctx context.Context, queueName string) (*rmq.Consumer, error) {
-	return c.conn.NewConsumer(ctx, queueName, nil)
+func (c *Client) newConsumer(ctx context.Context, queueName string, prefetch int32) (*rmq.Consumer, error) {
+	return c.conn.NewConsumer(ctx, queueName, &rmq.ConsumerOptions{InitialCredits: prefetch})
 }
 
-func (c *Client) NewTimelinePublisher(ctx context.Context) (*Publisher, error) {
+func (c *Client) NewTimelinePublisher(ctx context.Context) (Publisher, error) {
 	return c.newPublisher(ctx, TimelineExchange, TimelinePublishRK)
 }
 
-func (c *Client) NewRatingPublisher(ctx context.Context) (*Publisher, error) {
+func (c *Client) NewRatingPublisher(ctx context.Context) (Publisher, error) {
 	return c.newPublisher(ctx, RatingExchange, RatingPublishRK)
 }
 
-func (c *Client) NewCommentPublisher(ctx context.Context) (*Publisher, error) {
+func (c *Client) NewCommentPublisher(ctx context.Context) (Publisher, error) {
 	return c.newPublisher(ctx, CommentExchange, CommentPublishRK)
 }
 
-func (c *Client) NewSocialPublisher(ctx context.Context) (*Publisher, error) {
+func (c *Client) NewSocialPublisher(ctx context.Context) (Publisher, error) {
 	return c.newPublisher(ctx, SocialExchange, SocialPublishRK)
 }
 
-func (c *Client) NewPopularityPublisher(ctx context.Context) (*Publisher, error) {
+func (c *Client) NewPopularityPublisher(ctx context.Context) (Publisher, error) {
 	return c.newPublisher(ctx, PopularityExchange, PopularityPublishRK)
 }

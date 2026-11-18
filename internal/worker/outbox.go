@@ -15,7 +15,7 @@ import (
 // OutboxPoller 将视频发布信息发送到redis的feed:global_timeline
 // 轮询 outbox_msgs(status=pending)：优先经 MQ 发布时间线事件；
 // MQ 不可用/发布失败时降级直写 Redis ZSET。内部 goroutine，1s 轮询。
-func OutboxPoller(ctx context.Context, db *gorm.DB, cache *data.RedisClient, pub *messaging.Publisher) {
+func OutboxPoller(ctx context.Context, db *gorm.DB, cache *data.RedisClient, pub messaging.Publisher) {
 	go func() {
 		for {
 			select {

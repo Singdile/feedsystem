@@ -9,10 +9,10 @@ import (
 )
 
 type commentMQ struct {
-	pub *messaging.Publisher
+	pub messaging.Publisher
 }
 
-func NewCommentMQ(pub *messaging.Publisher) *commentMQ {
+func NewCommentMQ(pub messaging.Publisher) *commentMQ {
 	return &commentMQ{
 		pub: pub,
 	}

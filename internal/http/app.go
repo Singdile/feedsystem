@@ -13,9 +13,9 @@ type App struct {
 	DB            *gorm.DB
 	Cache         *data.RedisClient
 	MC            *data.MinioClient
-	RatingMQPub   *messaging.Publisher
-	CommentMQPub  *messaging.Publisher
-	SocialMQPub   *messaging.Publisher
-	PopularityPub *messaging.Publisher
+	RatingMQPub   messaging.Publisher
+	CommentMQPub  messaging.Publisher
+	SocialMQPub   messaging.Publisher
+	PopularityPub messaging.Publisher
 	Secret        config.JwtConfig
 }

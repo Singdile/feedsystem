@@ -21,7 +21,7 @@ func RunConsumer(ctx context.Context, c *Client, queueName string, h Handler) {
 			default:
 			}
 
-			consumer, err := c.newConsumer(ctx, queueName) //连接
+			consumer, err := c.newConsumer(ctx, queueName, 32) //连接
 			if err != nil {
 				log.Printf("messaging: consumer %s connect failed: %v", queueName, err)
 				time.Sleep(time.Second)

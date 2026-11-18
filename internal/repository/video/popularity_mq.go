@@ -9,10 +9,10 @@ import (
 
 // popularityMQ
 type popularityMQ struct {
-	pub *messaging.Publisher
+	pub messaging.Publisher
 }
 
-func NewPopularityMQ(pub *messaging.Publisher) *popularityMQ {
+func NewPopularityMQ(pub messaging.Publisher) *popularityMQ {
 	return &popularityMQ{pub: pub}
 }
 

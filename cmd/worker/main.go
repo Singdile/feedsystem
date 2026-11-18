@@ -76,7 +76,7 @@ func main() {
 }
 
 // initTimelineMQ 声明拓扑并创建发布者；失败返回nil
-func initTimelineMQ(ctx context.Context, mq *messaging.Client) *messaging.Publisher {
+func initTimelineMQ(ctx context.Context, mq *messaging.Client) messaging.Publisher {
 	if mq == nil {
 		return nil
 	}

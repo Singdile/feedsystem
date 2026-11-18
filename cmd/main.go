@@ -54,10 +54,10 @@ func main() {
 	}
 
 	var (
-		ratingPublisher     *messaging.Publisher
-		commentPublisher    *messaging.Publisher
-		socialPublisher     *messaging.Publisher
-		popularityPublisher *messaging.Publisher
+		ratingPublisher     messaging.Publisher
+		commentPublisher    messaging.Publisher
+		socialPublisher     messaging.Publisher
+		popularityPublisher messaging.Publisher
 	)
 
 	if mq != nil {
@@ -124,7 +124,7 @@ func main() {
 		log.Fatalf("failed to run server: %v", err)
 	}
 }
-func initPublisher(name string, ctx context.Context, f func(context.Context) (*messaging.Publisher, error)) *messaging.Publisher {
+func initPublisher(name string, ctx context.Context, f func(context.Context) (messaging.Publisher, error)) messaging.Publisher {
 	pub, err := f(ctx)
 	if err != nil {
 		log.Printf("failed to create %s publisher: %v", name, err)

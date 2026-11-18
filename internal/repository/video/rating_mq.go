@@ -12,10 +12,10 @@ import (
 
 // ratingMQ 实现 service/video.RatingMQ
 type ratingMQ struct {
-	pub *messaging.Publisher
+	pub messaging.Publisher
 }
 
-func NewRatingMQ(pub *messaging.Publisher) *ratingMQ {
+func NewRatingMQ(pub messaging.Publisher) *ratingMQ {
 	return &ratingMQ{pub: pub}
 }
 
