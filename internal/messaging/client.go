@@ -40,7 +40,7 @@ func (c *Client) newPublisher(ctx context.Context, exchange, routingKey string) 
 	return &rmqPublisher{pub: pub}, nil
 }
 
-func (c *Client) openSource(ctx context.Context, queue string, prefetch int32) (messageSource, error) {
+func (c *Client) OpenSource(ctx context.Context, queue string, prefetch int32) (MessageSource, error) {
 	cons, err := c.conn.NewConsumer(ctx, queue, &rmq.ConsumerOptions{InitialCredits: prefetch})
 	if err != nil {
 		return nil, err
@@ -67,3 +67,5 @@ func (c *Client) NewSocialPublisher(ctx context.Context) (Publisher, error) {
 func (c *Client) NewPopularityPublisher(ctx context.Context) (Publisher, error) {
 	return c.newPublisher(ctx, PopularityExchange, PopularityPublishRK)
 }
+
+var _ SourceFactory = (*Client)(nil)

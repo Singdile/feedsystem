@@ -24,4 +24,4 @@ func (s rmqConsumerSource) Close(ctx context.Context) error {
 }
 
 // 实现接口rmqConsumerSource
-var _ messageSource = rmqConsumerSource{}
+var _ MessageSource = rmqConsumerSource{}
