@@ -35,7 +35,7 @@ func RunConsumer(ctx context.Context, c *Client, queueName string, h Handler) {
 					break
 				}
 
-				err = h(ctx, deliveryMessage{dc: dc}) // handle 处理mq信息
+				err = h(ctx, rmqDelivery{dc: dc}) // handle 处理mq信息
 				if err != nil {
 					log.Printf("messaging: handle %s failed: %v ", queueName, err)
 				}

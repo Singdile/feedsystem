@@ -2,10 +2,10 @@ package messaging
 
 import (
 	"context"
-
-	rmq "github.com/rabbitmq/rabbitmq-amqp-go-client/pkg/rabbitmqamqp"
+	"time"
 )
 
+// Message 定义业务层面的消息接口方法,是handler方法可见的消息
 type Message interface {
 	Body() []byte
 	Accept(ctx context.Context) error
@@ -13,9 +13,10 @@ type Message interface {
 
 type Handler func(ctx context.Context, msg Message) error
 
-type deliveryMessage struct {
-	dc rmq.IDeliveryContext
-}
+const settleTimeout = 3 * time.Second
 
-func (m deliveryMessage) Body() []byte                     { return m.dc.Message().GetData() }
-func (m deliveryMessage) Accept(ctx context.Context) error { return m.dc.Accept(ctx) }
+// settleContext 去掉父 ctx 的取消信号，只保留超时上限。
+// 用于"处理已超时，但确认必须成功"的场景。
+func settleContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), settleTimeout)
+}
