@@ -40,8 +40,12 @@ func (c *Client) newPublisher(ctx context.Context, exchange, routingKey string) 
 	return &rmqPublisher{pub: pub}, nil
 }
 
-func (c *Client) newConsumer(ctx context.Context, queueName string, prefetch int32) (*rmq.Consumer, error) {
-	return c.conn.NewConsumer(ctx, queueName, &rmq.ConsumerOptions{InitialCredits: prefetch})
+func (c *Client) openSource(ctx context.Context, queue string, prefetch int32) (messageSource, error) {
+	cons, err := c.conn.NewConsumer(ctx, queue, &rmq.ConsumerOptions{InitialCredits: prefetch})
+	if err != nil {
+		return nil, err
+	}
+	return rmqConsumerSource{c: cons}, nil
 }
 
 func (c *Client) NewTimelinePublisher(ctx context.Context) (Publisher, error) {
