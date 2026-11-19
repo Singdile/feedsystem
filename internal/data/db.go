@@ -5,7 +5,7 @@ import (
 	"context"
 	"feedsystem/internal/config"
 	"feedsystem/internal/model/account"
-	"feedsystem/internal/model/feed"
+	"feedsystem/internal/model/outbox"
 	"feedsystem/internal/model/video"
 	"fmt"
 	"log"
@@ -73,7 +73,7 @@ func NewDB(config config.DBConfig) (*gorm.DB, error) {
 
 // AutoMigrate 根据定义，迁移创建表
 func AutoMigrate(db *gorm.DB) error {
-	return db.AutoMigrate(&account.User{}, &video.Video{}, &feed.OutboxMsg{}, &video.Tag{}, &video.VideoTag{}, &video.VideoRating{}, &video.Comment{}, &account.Social{}, &account.Notification{})
+	return db.AutoMigrate(&account.User{}, &video.Video{}, &outbox.Msg{}, &video.Tag{}, &video.VideoTag{}, &video.VideoRating{}, &video.Comment{}, &account.Social{}, &account.Notification{})
 }
 
 // CloseDB 关闭数据库连接

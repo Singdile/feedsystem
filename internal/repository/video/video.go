@@ -5,7 +5,7 @@ import (
 	"context"
 	"errors"
 	"feedsystem/internal/data"
-	"feedsystem/internal/model/feed"
+	"feedsystem/internal/model/outbox"
 	"feedsystem/internal/model/video"
 	"io"
 	"time"
@@ -121,11 +121,11 @@ func (r *videoRepo) CreateWithOutbox(ctx context.Context, v *video.Video) (*vide
 		}
 
 		// 填写outboxMSg信息
-		var m = &feed.OutboxMsg{
+		var m = &outbox.Msg{
 			VideoID:   v.ID,
 			AuthorID:  v.AuthorID,
-			EventType: "publish",
-			Status:    "pending",
+			EventType: outbox.EventTypePublish,
+			Status:    outbox.StatusPending,
 		}
 		if err := tx.Create(m).Error; err != nil {
 			return err
