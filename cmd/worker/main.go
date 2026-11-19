@@ -7,6 +7,7 @@ import (
 	"feedsystem/internal/data"
 	"feedsystem/internal/messaging"
 	"feedsystem/internal/messaging/rabbitmq"
+	outboxrepo "feedsystem/internal/repository/outbox"
 	"feedsystem/internal/repository/social"
 	"feedsystem/internal/repository/video"
 	"feedsystem/internal/worker"
@@ -57,11 +58,13 @@ func main() {
 	// 启动timeline
 	timelinePublisher := initTimelineMQ(ctx, mq)
 
-	// outboxPoller 无论mq 是否可用都可以使用
-	worker.OutboxPoller(ctx, DB, rdb, timelinePublisher)
+	// outboxPoller：publisher 可用时持续投递视频发布时间线事件
+	outboxStore := outboxrepo.NewOutboxRepo(DB)
+	outboxPoller := worker.NewOutboxPoller(outboxStore, timelinePublisher, worker.OutboxConfig{BatchSize: 100, PublishTimeout: 5 * time.Second, PollInterval: time.Second, ReclaimAfter: 5 * time.Minute, MaxAttempts: 10})
 
 	var wg sync.WaitGroup
 
+	wg.Go(func() { outboxPoller.Run(ctx) })
 	// 多线处理队列
 	run := func(cfg messaging.ConsumerConfig, h messaging.Handler) {
 		log.Printf("consumer %s start: concurrency=%d prefetch=%d timeout=%s", cfg.Queue, cfg.Concurrency, cfg.Prefetch, cfg.Timeout)
