@@ -1,6 +1,16 @@
 package messaging
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+var (
+	// ErrConnectionNotReady 连接正在重连，暂时不能创建 consumer
+	ErrConnectionNotReady = errors.New("messaging: connection not ready")
+	// ErrConnectionClosed 连接已永久关闭（库放弃恢复）
+	ErrConnectionClosed = errors.New("messaging: connection closed")
+)
 
 // messageSource 定义信息来源: 从队列中拉取消息，直到被关闭
 type MessageSource interface {

@@ -42,6 +42,15 @@ func (c *Client) newPublisher(ctx context.Context, exchange, routingKey string) 
 }
 
 func (c *Client) OpenSource(ctx context.Context, queue string, prefetch int32) (messaging.MessageSource, error) {
+	switch c.conn.State().(type) {
+	case *rmq.StateOpen:
+		// 可以创建
+	case *rmq.StateClosed:
+		return nil, messaging.ErrConnectionClosed
+	default:
+		return nil, messaging.ErrConnectionNotReady
+	}
+
 	cons, err := c.conn.NewConsumer(ctx, queue, &rmq.ConsumerOptions{InitialCredits: prefetch})
 	if err != nil {
 		return nil, err

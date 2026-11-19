@@ -381,3 +381,52 @@ func TestConsumerStopWithoutMessages(t *testing.T) {
 	cancel()
 	require.NoError(t, waitConsume(t, errCh))
 }
+
+// TestConsumerConnectionNotReadyRetries 验证连接重连期间不创建 consumer，
+// 并在连接恢复后继续消费。
+func TestConsumerConnectionNotReadyRetries(t *testing.T) {
+	msg := &fakeMessage{}
+	handled := make(chan struct{}, 1)
+
+	cfg := testConfig()
+	cfg.ConnectBackoff = time.Millisecond
+
+	f := &fakeFactory{
+		errs:    []error{ErrConnectionNotReady, ErrConnectionNotReady},
+		sources: []*fakeSource{{msgs: []Message{msg}}},
+	}
+
+	h := func(ctx context.Context, m Message) error {
+		if err := m.Accept(ctx); err != nil {
+			return err
+		}
+		handled <- struct{}{}
+		return nil
+	}
+
+	cancel, errCh := startConsume(t, cfg, f, h)
+
+	select {
+	case <-handled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("NotReady 之后未恢复消费")
+	}
+
+	cancel()
+	require.NoError(t, waitConsume(t, errCh))
+	require.GreaterOrEqual(t, f.callCount(), 3, "应重试 OpenSource")
+}
+
+// TestConsumerConnectionClosedPropagates 验证连接永久关闭时 Consume 返回错误。
+func TestConsumerConnectionClosedPropagates(t *testing.T) {
+	cfg := testConfig()
+	cfg.ConnectBackoff = time.Millisecond
+
+	f := &fakeFactory{errs: []error{ErrConnectionClosed}}
+
+	_, errCh := startConsume(t, cfg, f, func(ctx context.Context, m Message) error {
+		return nil
+	})
+
+	require.ErrorIs(t, waitConsume(t, errCh), ErrConnectionClosed)
+}

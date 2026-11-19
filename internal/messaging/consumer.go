@@ -73,7 +73,7 @@ func (c *runtimeConsumer) Consume(ctx context.Context, cfg ConsumerConfig, h Han
 	}
 
 	// 循环从消息队列中取出数据到对channel
-	c.reconnectLoop(ctx, cfg, jobs)
+	runErr := c.reconnectLoop(ctx, cfg, jobs)
 
 	// 关闭channel，释放对应的处理 goroutine
 	close(jobs)
@@ -88,28 +88,43 @@ func (c *runtimeConsumer) Consume(ctx context.Context, cfg ConsumerConfig, h Han
 
 	select {
 	case <-done:
-		return nil
+		return runErr
 	case <-time.After(cfg.DrainTimeout):
 		log.Printf("messaging: %s drain timeout after %s, %d messages still queued",
 			cfg.Queue, cfg.DrainTimeout, len(jobs))
+
+		if runErr != nil {
+			return runErr
+		}
 		return ErrDrainTimeout
 	}
 }
 
 // reconnectLoop 从消息队列中取出数据到对应channel中
-func (c *runtimeConsumer) reconnectLoop(ctx context.Context, cfg ConsumerConfig, jobs chan<- Message) {
+func (c *runtimeConsumer) reconnectLoop(ctx context.Context, cfg ConsumerConfig, jobs chan<- Message) error {
 	for {
 		if ctx.Err() != nil {
-			return
+			return nil
 		}
 
 		src, err := c.factory.OpenSource(ctx, cfg.Queue, cfg.Prefetch)
 		if err != nil {
-			log.Printf("messaging: connect %s failed: %v", cfg.Queue, err)
-			if !sleepCtx(ctx, cfg.ConnectBackoff) {
-				return
+			switch {
+			case errors.Is(err, ErrConnectionNotReady):
+				if !sleepCtx(ctx, cfg.ConnectBackoff) {
+					return nil
+				}
+				continue
+			case errors.Is(err, ErrConnectionClosed):
+				log.Printf("messaging: %s connection closed, consumer stopped", cfg.Queue)
+				return ErrConnectionClosed
+			default:
+				log.Printf("messaging: connect %s failed: %v", cfg.Queue, err)
+				if !sleepCtx(ctx, cfg.ConnectBackoff) {
+					return nil
+				}
+				continue
 			}
-			continue
 		}
 
 		receiveLoop(ctx, src, jobs)
@@ -119,10 +134,10 @@ func (c *runtimeConsumer) reconnectLoop(ctx context.Context, cfg ConsumerConfig,
 		cancel()
 
 		if ctx.Err() != nil {
-			return
+			return nil
 		}
 		if !sleepCtx(ctx, cfg.ReconnectBackoff) {
-			return
+			return nil
 		}
 	}
 }
