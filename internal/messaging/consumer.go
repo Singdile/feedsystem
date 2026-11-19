@@ -111,6 +111,8 @@ func (c *runtimeConsumer) reconnectLoop(ctx context.Context, cfg ConsumerConfig,
 }
 
 // RunConsumer 通用的消费循环，新建一个消费者链接上队列，循环进行消费，拿到信息,并对信息进行处理
+//
+// Deprecated: 使用 NewConsumer + Consumer.Consume。
 func RunConsumer(ctx context.Context, c *Client, queueName string, h Handler) {
 	if c == nil {
 		log.Printf("messaging: consumer %s not started: nil client", queueName)

@@ -92,7 +92,18 @@ func main() {
 	hub := worker.NewSSEHub(DB, rdb, jwt.SetSecret(conf.JwtConfig.Secret))
 	// 启动 NotificationWorker 消费 notification.events 队列
 	if mq != nil {
-		messaging.RunConsumer(context.Background(), mq, messaging.NotificationQueue, worker.NotificationHandler(DB, hub, rdb))
+		go func() {
+			cfg := messaging.ConsumerConfig{
+				Queue:       messaging.NotificationQueue,
+				Concurrency: 2,
+				Prefetch:    8,
+				Timeout:     5 * time.Second,
+			}
+			if err := messaging.NewConsumer(mq).Consume(context.Background(), cfg,
+				worker.NotificationHandler(DB, hub, rdb)); err != nil {
+				log.Printf("notification consumer stopped: %v", err)
+			}
+		}()
 	}
 
 	// 装配路由并启动 HTTP 服务

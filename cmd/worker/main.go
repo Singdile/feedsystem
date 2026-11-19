@@ -12,6 +12,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -52,27 +53,79 @@ func main() {
 	}
 	cancel()
 
-	// 启动消费
-	ratingSeter := video.NewRatingRepo(DB, rdb)
-	messaging.RunConsumer(ctx, mq, messaging.RatingQueue, worker.RatingHandler(ratingSeter))
-
 	// 启动timeline
 	timelinePublisher := initTimelineMQ(ctx, mq)
 
 	// outboxPoller 无论mq 是否可用都可以使用
 	worker.OutboxPoller(ctx, DB, rdb, timelinePublisher)
-	socialRepo := social.NewSocialRepo(DB)
-	messaging.RunConsumer(ctx, mq, messaging.TimelineQueue, worker.TimelineHandler(rdb, socialRepo))
 
-	// 启动comment
+	var wg sync.WaitGroup
+
+	// 多线处理队列
+	run := func(cfg messaging.ConsumerConfig, h messaging.Handler) {
+		log.Printf("consumer %s start: concurrency=%d prefetch=%d timeout=%s", cfg.Queue, cfg.Concurrency, cfg.Prefetch, cfg.Timeout)
+
+		if err := messaging.NewConsumer(mq).Consume(ctx, cfg, h); err != nil {
+			log.Printf("consumer %s stopped: %v", cfg.Queue, err)
+		}
+	}
+
+	// 启动rating 消费
+	ratingSeter := video.NewRatingRepo(DB, rdb)
+	wg.Go(
+		func() {
+			run(
+				messaging.ConsumerConfig{
+					Queue:       messaging.RatingQueue,
+					Concurrency: 4,
+					Prefetch:    16,
+					Timeout:     3 * time.Second,
+				},
+				worker.RatingHandler(ratingSeter),
+			)
+		},
+	)
+
+	// 启动comment 消费
 	commentWriter := video.NewCommentRepo(DB, rdb)
-	messaging.RunConsumer(ctx, mq, messaging.CommentQueue, worker.CommentHandler(commentWriter))
+	wg.Go(
+		func() {
+			run(messaging.ConsumerConfig{
+				Queue:       messaging.CommentQueue,
+				Concurrency: 1,
+				Prefetch:    4,
+				Timeout:     5 * time.Second,
+			}, worker.CommentHandler(commentWriter))
+		},
+	)
 
-	// 启动popularity worker
+	//启动popularity 消费
 	popularityCache := video.NewPopularityRepo(rdb)
-	messaging.RunConsumer(ctx, mq, messaging.PopularityQueue, worker.PopularityHandler(popularityCache))
+	wg.Go(
+		func() {
+			run(messaging.ConsumerConfig{
+				Queue:       messaging.PopularityQueue,
+				Concurrency: 8,
+				Prefetch:    32,
+				Timeout:     2 * time.Second,
+			}, worker.PopularityHandler(popularityCache))
+		},
+	)
 
+	//启动 timeline 消费
+	socialRepo := social.NewSocialRepo(DB)
+	wg.Go(
+		func() {
+			run(messaging.ConsumerConfig{
+				Queue:       messaging.TimelineQueue,
+				Concurrency: 4,
+				Prefetch:    16,
+				Timeout:     5 * time.Second,
+			}, worker.TimelineHandler(rdb, socialRepo))
+		},
+	)
 	<-ctx.Done() // 阻塞等待 SIGINT/SIGTERM
+	wg.Wait()    // 等所有消费者 drain 完成后，再由 defer 关闭 DB/Redis
 }
 
 // initTimelineMQ 声明拓扑并创建发布者；失败返回nil
