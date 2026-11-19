@@ -1,4 +1,4 @@
-package messaging
+package rabbitmq
 
 import (
 	"context"
@@ -11,8 +11,8 @@ func TestDeclareAll_NilClient(t *testing.T) {
 	require.ErrorIs(t, DeclareAll(context.Background(), nil), ErrNilClient)
 }
 
-// TestTopologyConstants 保证队列/交换机名字非空且不重复，
-// 避免后续改动把两个用途绑到同一个名字上。
+// TestTopologyConstants 保证 exchange / binding key / routing key 非空且不重复。
+// 队列名属于端口包，由 messaging 的测试负责。
 func TestTopologyConstants(t *testing.T) {
 	t.Run("exchange 非空且唯一", func(t *testing.T) {
 		exchanges := []string{
@@ -23,17 +23,6 @@ func TestTopologyConstants(t *testing.T) {
 			PopularityExchange,
 		}
 		requireUniqueNonEmpty(t, "exchange", exchanges)
-	})
-
-	t.Run("queue 非空且唯一", func(t *testing.T) {
-		queues := []string{
-			TimelineQueue,
-			RatingQueue,
-			CommentQueue,
-			NotificationQueue,
-			PopularityQueue,
-		}
-		requireUniqueNonEmpty(t, "queue", queues)
 	})
 
 	t.Run("binding key 非空且唯一", func(t *testing.T) {

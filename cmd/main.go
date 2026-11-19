@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"feedsystem/internal/messaging"
+	"feedsystem/internal/messaging/rabbitmq"
 	"feedsystem/internal/pkg/jwt"
 	"feedsystem/internal/worker"
 	"fmt"
@@ -45,7 +46,7 @@ func main() {
 	defer rdb.Close()
 
 	// 连接rabbitmq（MQ 不可用时降级禁用，不阻塞启动）
-	mq, err := messaging.NewClient(conf.RabbitMQConfig)
+	mq, err := rabbitmq.NewClient(conf.RabbitMQConfig)
 	if err != nil {
 		log.Printf("rabbitmq connect failed (mq disabled): %v", err)
 		mq = nil
@@ -62,7 +63,7 @@ func main() {
 
 	if mq != nil {
 		topCtx, cancelTopo := context.WithTimeout(context.Background(), 30*time.Second)
-		err := messaging.DeclareAll(topCtx, mq)
+		err := rabbitmq.DeclareAll(topCtx, mq)
 		cancelTopo()
 		if err != nil {
 			log.Printf("rabbitmq topology declaration failed: %v", err)

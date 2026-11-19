@@ -14,7 +14,7 @@ func TestSettleContext(t *testing.T) {
 	parent, cancelParent := context.WithCancel(context.Background())
 	cancelParent() // 模拟 handler 已经超时/被取消
 
-	settleCtx, cancelSettle := settleContext(parent)
+	settleCtx, cancelSettle := SettleContext(parent)
 	defer cancelSettle()
 
 	require.NoError(t, settleCtx.Err(), "settle ctx 不应继承父 ctx 的取消")

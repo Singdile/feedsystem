@@ -1,8 +1,9 @@
-package messaging
+package rabbitmq
 
 import (
 	"context"
 	"feedsystem/internal/config"
+	"feedsystem/internal/messaging"
 	"fmt"
 	"time"
 
@@ -31,7 +32,7 @@ func NewClient(conf config.RabbitMQConfig) (*Client, error) {
 	}, nil
 }
 
-func (c *Client) newPublisher(ctx context.Context, exchange, routingKey string) (Publisher, error) {
+func (c *Client) newPublisher(ctx context.Context, exchange, routingKey string) (messaging.Publisher, error) {
 	addr := rmq.ExchangeAddress{Exchange: exchange, Key: routingKey}
 	pub, err := c.conn.NewPublisher(ctx, &addr, nil)
 	if err != nil {
@@ -40,7 +41,7 @@ func (c *Client) newPublisher(ctx context.Context, exchange, routingKey string) 
 	return &rmqPublisher{pub: pub}, nil
 }
 
-func (c *Client) OpenSource(ctx context.Context, queue string, prefetch int32) (MessageSource, error) {
+func (c *Client) OpenSource(ctx context.Context, queue string, prefetch int32) (messaging.MessageSource, error) {
 	cons, err := c.conn.NewConsumer(ctx, queue, &rmq.ConsumerOptions{InitialCredits: prefetch})
 	if err != nil {
 		return nil, err
@@ -48,24 +49,24 @@ func (c *Client) OpenSource(ctx context.Context, queue string, prefetch int32) (
 	return rmqConsumerSource{c: cons}, nil
 }
 
-func (c *Client) NewTimelinePublisher(ctx context.Context) (Publisher, error) {
+func (c *Client) NewTimelinePublisher(ctx context.Context) (messaging.Publisher, error) {
 	return c.newPublisher(ctx, TimelineExchange, TimelinePublishRK)
 }
 
-func (c *Client) NewRatingPublisher(ctx context.Context) (Publisher, error) {
+func (c *Client) NewRatingPublisher(ctx context.Context) (messaging.Publisher, error) {
 	return c.newPublisher(ctx, RatingExchange, RatingPublishRK)
 }
 
-func (c *Client) NewCommentPublisher(ctx context.Context) (Publisher, error) {
+func (c *Client) NewCommentPublisher(ctx context.Context) (messaging.Publisher, error) {
 	return c.newPublisher(ctx, CommentExchange, CommentPublishRK)
 }
 
-func (c *Client) NewSocialPublisher(ctx context.Context) (Publisher, error) {
+func (c *Client) NewSocialPublisher(ctx context.Context) (messaging.Publisher, error) {
 	return c.newPublisher(ctx, SocialExchange, SocialPublishRK)
 }
 
-func (c *Client) NewPopularityPublisher(ctx context.Context) (Publisher, error) {
+func (c *Client) NewPopularityPublisher(ctx context.Context) (messaging.Publisher, error) {
 	return c.newPublisher(ctx, PopularityExchange, PopularityPublishRK)
 }
 
-var _ SourceFactory = (*Client)(nil)
+var _ messaging.SourceFactory = (*Client)(nil)

@@ -6,6 +6,7 @@ import (
 	"feedsystem/internal/config"
 	"feedsystem/internal/data"
 	"feedsystem/internal/messaging"
+	"feedsystem/internal/messaging/rabbitmq"
 	"feedsystem/internal/repository/social"
 	"feedsystem/internal/repository/video"
 	"feedsystem/internal/worker"
@@ -36,7 +37,7 @@ func main() {
 	defer rdb.Close()
 
 	// 连接MQ
-	mq, err := messaging.NewClient(config.Conf.RabbitMQConfig)
+	mq, err := rabbitmq.NewClient(config.Conf.RabbitMQConfig)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -47,7 +48,7 @@ func main() {
 
 	// 声明拓扑
 	topoCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	if err := messaging.DeclareAll(topoCtx, mq); err != nil {
+	if err := rabbitmq.DeclareAll(topoCtx, mq); err != nil {
 		cancel()
 		log.Fatalf("failed to declare topology: %v", err)
 	}
@@ -129,7 +130,7 @@ func main() {
 }
 
 // initTimelineMQ 声明拓扑并创建发布者；失败返回nil
-func initTimelineMQ(ctx context.Context, mq *messaging.Client) messaging.Publisher {
+func initTimelineMQ(ctx context.Context, mq *rabbitmq.Client) messaging.Publisher {
 	if mq == nil {
 		return nil
 	}

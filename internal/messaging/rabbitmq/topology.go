@@ -1,9 +1,9 @@
-// 把所有的队列、交换机声明集中
-package messaging
+package rabbitmq
 
 import (
 	"context"
 	"errors"
+	"feedsystem/internal/messaging"
 	"fmt"
 	"time"
 
@@ -12,17 +12,14 @@ import (
 
 const (
 	TimelineExchange   = "video.timeline.events"
-	TimelineQueue      = "video.timeline.update.queue"
 	TimelineBindingKey = "video.timeline.*"       //队列绑到交换机时用的 binding key
 	TimelinePublishRK  = "video.timeline.publish" //生产者发布信息携带的 routing key
 
 	RatingExchange   = "rating.events"
-	RatingQueue      = "rating.events"
 	RatingBindingKey = "rating.*"
 	RatingPublishRK  = "rating.update"
 
 	CommentExchange   = "comment.events"
-	CommentQueue      = "comment.events"
 	CommentBindingKey = "comment.*"
 	CommentPublishRK  = "comment.publish" // 唯一 RK，publish/delete 都走它
 
@@ -30,17 +27,13 @@ const (
 	SocialBindingKey = "social.*"
 	SocialPublishRK  = "social.follow"
 
-	NotificationQueue = "notification.events" // 通知队列（API 进程 NotificationWorker 消费）
-
 	PopularityExchange   = "popularity.events" // 热榜交换机
-	PopularityQueue      = "popularity.events" // 热榜事件队列
 	PopularityBindingKey = "popularity.*"      // 队列绑定到交换机的 key
 	PopularityPublishRK  = "popularity.update" // 热榜事件发布者发布到交换机的KEY
 )
 
 var (
-	ErrNilClient    = errors.New("messaging: rabbitmq client is nil")
-	ErrNilPublisher = errors.New("messaging: publisher is nil")
+	ErrNilClient = errors.New("messaging: rabbitmq client is nil")
 )
 
 const declareStepTimeout = 5 * time.Second
@@ -102,34 +95,34 @@ func (c *Client) declareTopology(ctx context.Context, exchange, queueName, bindK
 
 // DeclareTimelineTopology 声明时间线相关的交换机和队列
 func (c *Client) DeclareTimelineTopology(ctx context.Context) error {
-	return c.declareTopology(ctx, TimelineExchange, TimelineQueue, TimelineBindingKey)
+	return c.declareTopology(ctx, TimelineExchange, messaging.TimelineQueue, TimelineBindingKey)
 }
 
 // DeclareRatingTopology 声明Rating MQ
 func (c *Client) DeclareRatingTopology(ctx context.Context) error {
-	return c.declareTopology(ctx, RatingExchange, RatingQueue, RatingBindingKey)
+	return c.declareTopology(ctx, RatingExchange, messaging.RatingQueue, RatingBindingKey)
 }
 
 // DeclareCommentTopology 声明comment MQ  (exchange, queue, bindKey)
 func (c *Client) DeclareCommentTopology(ctx context.Context) error {
-	return c.declareTopology(ctx, CommentExchange, CommentQueue, CommentBindingKey)
+	return c.declareTopology(ctx, CommentExchange, messaging.CommentQueue, CommentBindingKey)
 }
 
 func (c *Client) DeclareSocialTopology(ctx context.Context) error {
-	return c.declareTopology(ctx, SocialExchange, NotificationQueue, SocialBindingKey)
+	return c.declareTopology(ctx, SocialExchange, messaging.NotificationQueue, SocialBindingKey)
 }
 
 // DeclareNotificationTopology 声明Notification 对列，并绑定到rating\comment\social exchange上
 func (c *Client) DeclareNotificationTopology(ctx context.Context) error {
 	// 同一个 notification.events 队列，绑定三个来源 exchange，并且绑定key与之前声明的队列的key相同
 	// 这样，可以同时接收相同的信息了
-	if err := c.declareTopology(ctx, RatingExchange, NotificationQueue, RatingBindingKey); err != nil {
+	if err := c.declareTopology(ctx, RatingExchange, messaging.NotificationQueue, RatingBindingKey); err != nil {
 		return err
 	}
-	if err := c.declareTopology(ctx, CommentExchange, NotificationQueue, CommentBindingKey); err != nil {
+	if err := c.declareTopology(ctx, CommentExchange, messaging.NotificationQueue, CommentBindingKey); err != nil {
 		return err
 	}
-	if err := c.declareTopology(ctx, SocialExchange, NotificationQueue, SocialBindingKey); err != nil {
+	if err := c.declareTopology(ctx, SocialExchange, messaging.NotificationQueue, SocialBindingKey); err != nil {
 		return err
 	}
 	return nil
@@ -137,5 +130,5 @@ func (c *Client) DeclareNotificationTopology(ctx context.Context) error {
 
 // DeclarePopularityTopology 声明popularity MQ  (exchange, queue, bindKey)
 func (c *Client) DeclarePopularityTopology(ctx context.Context) error {
-	return c.declareTopology(ctx, PopularityExchange, PopularityQueue, PopularityBindingKey)
+	return c.declareTopology(ctx, PopularityExchange, messaging.PopularityQueue, PopularityBindingKey)
 }

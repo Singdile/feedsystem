@@ -17,6 +17,6 @@ const settleTimeout = 3 * time.Second
 
 // settleContext 去掉父 ctx 的取消信号，只保留超时上限。
 // 用于"处理已超时，但确认必须成功"的场景。
-func settleContext(ctx context.Context) (context.Context, context.CancelFunc) {
+func SettleContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.WithoutCancel(ctx), settleTimeout)
 }

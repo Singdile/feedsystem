@@ -1,7 +1,9 @@
-package messaging
+package rabbitmq
 
 import (
 	"testing"
+
+	"feedsystem/internal/messaging"
 
 	"github.com/stretchr/testify/require"
 )
@@ -13,8 +15,8 @@ import (
 // 判断 pub == nil 完成，而不是依赖接口方法内部判空。
 func TestRmqPublisher_Nil(t *testing.T) {
 	var nilPublisher *rmqPublisher
-	require.ErrorIs(t, nilPublisher.Publish(t.Context(), &Envelope{}), ErrNilPublisher)
+	require.ErrorIs(t, nilPublisher.Publish(t.Context(), &messaging.Envelope{}), messaging.ErrNilPublisher)
 
 	empty := &rmqPublisher{}
-	require.ErrorIs(t, empty.Publish(t.Context(), &Envelope{}), ErrNilPublisher)
+	require.ErrorIs(t, empty.Publish(t.Context(), &messaging.Envelope{}), messaging.ErrNilPublisher)
 }
