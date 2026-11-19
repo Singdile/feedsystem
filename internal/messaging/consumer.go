@@ -2,11 +2,14 @@ package messaging
 
 import (
 	"context"
+	"errors"
 	"log"
 	"runtime/debug"
 	"sync"
 	"time"
 )
+
+var ErrDrainTimeout = errors.New("messaging: drain timeout")
 
 type Consumer interface {
 	Consume(ctx context.Context, cfg ConsumerConfig, h Handler) error
@@ -17,7 +20,7 @@ type ConsumerConfig struct {
 	Concurrency      int           //同时处理队列的几条消息
 	Prefetch         int32         //最多同一时间接收多少条信息
 	Timeout          time.Duration // 单条信息最多处理多久
-	DrainTimeout     time.Duration // 推出时最多等待多久
+	DrainTimeout     time.Duration // 退出时最多等待多久
 	ConnectBackoff   time.Duration //首次连接失败后等待多久
 	ReconnectBackoff time.Duration //链路断开后等多久重建
 }
@@ -58,7 +61,7 @@ func (c *runtimeConsumer) Consume(ctx context.Context, cfg ConsumerConfig, h Han
 	jobs := make(chan Message, cfg.Prefetch)
 	var wg sync.WaitGroup
 
-	// 启动多个 gorutuine 处理channel中的信息
+	// 启动多个 goroutine 处理channel中的信息
 	for i := 0; i < cfg.Concurrency; i++ {
 		wg.Go(
 			func() {
@@ -72,11 +75,25 @@ func (c *runtimeConsumer) Consume(ctx context.Context, cfg ConsumerConfig, h Han
 	// 循环从消息队列中取出数据到对channel
 	c.reconnectLoop(ctx, cfg, jobs)
 
-	// 关闭channel，释放对应的处理gorutine
+	// 关闭channel，释放对应的处理 goroutine
 	close(jobs)
-	wg.Wait()
 
-	return nil
+	// 等待处理剩余的数据
+	done := make(chan struct{})
+
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		return nil
+	case <-time.After(cfg.DrainTimeout):
+		log.Printf("messaging: %s drain timeout after %s, %d messages still queued",
+			cfg.Queue, cfg.DrainTimeout, len(jobs))
+		return ErrDrainTimeout
+	}
 }
 
 // reconnectLoop 从消息队列中取出数据到对应channel中
