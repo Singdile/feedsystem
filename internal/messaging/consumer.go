@@ -3,6 +3,8 @@ package messaging
 import (
 	"context"
 	"log"
+	"runtime/debug"
+	"sync"
 	"time"
 )
 
@@ -52,39 +54,58 @@ type runtimeConsumer struct {
 
 func (c *runtimeConsumer) Consume(ctx context.Context, cfg ConsumerConfig, h Handler) error {
 	cfg = cfg.withDefaults()
+
+	jobs := make(chan Message, cfg.Prefetch)
+	var wg sync.WaitGroup
+
+	// 启动多个 gorutuine 处理channel中的信息
+	for i := 0; i < cfg.Concurrency; i++ {
+		wg.Go(
+			func() {
+				for msg := range jobs {
+					processOne(ctx, cfg, h, msg)
+				}
+			},
+		)
+	}
+
+	// 循环从消息队列中取出数据到对channel
+	c.reconnectLoop(ctx, cfg, jobs)
+
+	// 关闭channel，释放对应的处理gorutine
+	close(jobs)
+	wg.Wait()
+
+	return nil
+}
+
+// reconnectLoop 从消息队列中取出数据到对应channel中
+func (c *runtimeConsumer) reconnectLoop(ctx context.Context, cfg ConsumerConfig, jobs chan<- Message) {
 	for {
-		if ctx.Err() != nil { // 检查是否关闭
-			return nil
+		if ctx.Err() != nil {
+			return
 		}
 
-		// 打开信息来源
 		src, err := c.factory.OpenSource(ctx, cfg.Queue, cfg.Prefetch)
 		if err != nil {
 			log.Printf("messaging: connect %s failed: %v", cfg.Queue, err)
 			if !sleepCtx(ctx, cfg.ConnectBackoff) {
-				return nil
+				return
 			}
 			continue
 		}
 
-		// receive loop
-		receiveLoop(ctx, cfg, src, h)
+		receiveLoop(ctx, src, jobs)
 
-		// 关闭信息链路
 		closeCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		_ = src.Close(closeCtx)
 		cancel()
 
-		// 总ctx 关闭，返回
 		if ctx.Err() != nil {
-			return nil
+			return
 		}
-
-		// 尝试重连
-		log.Printf("messaging: %s link broken, reconnecting", cfg.Queue)
-
 		if !sleepCtx(ctx, cfg.ReconnectBackoff) {
-			return nil
+			return
 		}
 	}
 }
@@ -118,14 +139,33 @@ func sleepCtx(ctx context.Context, d time.Duration) bool {
 	}
 }
 
-func receiveLoop(ctx context.Context, cfg ConsumerConfig, src MessageSource, h Handler) {
+func receiveLoop(ctx context.Context, src MessageSource, jobs chan<- Message) {
 	for {
 		msg, err := src.Receive(ctx)
 		if err != nil {
 			return
 		}
-		if err := h(ctx, msg); err != nil {
-			log.Printf("messaging: handle %s failed: %v", cfg.Queue, err)
+		select {
+		case jobs <- msg:
+		case <-ctx.Done():
+			return
 		}
+	}
+}
+
+func processOne(ctx context.Context, cfg ConsumerConfig, h Handler, msg Message) {
+	base := context.WithoutCancel(ctx)
+	msgCtx, cancel := context.WithTimeout(base, cfg.Timeout)
+	defer cancel()
+
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("messaging: panic queue = %s err= %v \n %s", cfg.Queue, r, debug.Stack())
+			_ = msg.Accept(ctx)
+		}
+	}()
+
+	if err := h(msgCtx, msg); err != nil {
+		log.Printf("messaging: handle %s failed: %v", cfg.Queue, err)
 	}
 }
