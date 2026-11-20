@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"feedsystem/internal/messaging"
 	"feedsystem/internal/messaging/rabbitmq"
 	"feedsystem/internal/pkg/jwt"
@@ -12,12 +13,17 @@ import (
 	"net/http"
 	_ "net/http/pprof"
 	"os"
+	"os/signal"
+	"sync"
+	"syscall"
 	"time"
 
 	"feedsystem/internal/config"
 	"feedsystem/internal/data"
 	feedHttp "feedsystem/internal/http"
 )
+
+const shutdownTimeout = 5 * time.Second
 
 func main() {
 	// 加载配置
@@ -26,6 +32,10 @@ func main() {
 	}
 
 	conf := config.Conf
+
+	// 优雅退出：SIGINT / SIGTERM
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	// 连接数据库
 	DB, err := data.NewDB(conf.DBConfig)
@@ -91,20 +101,25 @@ func main() {
 
 	// 创建 SSEHub
 	hub := worker.NewSSEHub(DB, rdb, jwt.SetSecret(conf.JwtConfig.Secret))
+
+	consumerCtx, cancelConsumer := context.WithCancel(ctx)
+	defer cancelConsumer()
+
+	var consumerWG sync.WaitGroup
 	// 启动 NotificationWorker 消费 notification.events 队列
 	if mq != nil {
-		go func() {
+		consumerWG.Go(func() {
 			cfg := messaging.ConsumerConfig{
 				Queue:       messaging.NotificationQueue,
 				Concurrency: 2,
 				Prefetch:    8,
 				Timeout:     5 * time.Second,
 			}
-			if err := messaging.NewConsumer(mq).Consume(context.Background(), cfg,
+			if err := messaging.NewConsumer(mq).Consume(consumerCtx, cfg,
 				worker.NotificationHandler(DB, hub, rdb)); err != nil {
 				log.Printf("notification consumer stopped: %v", err)
 			}
-		}()
+		})
 	}
 
 	// 装配路由并启动 HTTP 服务
@@ -131,10 +146,57 @@ func main() {
 		}()
 	}
 	addr := fmt.Sprintf(":%d", conf.AppConfig.Port)
-	log.Printf("Server is running on %s", addr)
-	if err := router.Run(addr); err != nil {
-		log.Fatalf("failed to run server: %v", err)
+
+	srv := http.Server{
+		Addr:    addr,
+		Handler: router,
 	}
+	log.Printf("Server is running on %s", addr)
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("failed to run server: %v", err)
+		}
+	}()
+
+	<-ctx.Done() //等待结束信号
+	stop()       // 恢复默认信号处理：再次收到信号可立即退出
+	log.Printf("shutdown: signal received")
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancelShutdown()
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	// 1. 停止接收新请求，等待在途请求
+	go func() {
+		defer wg.Done()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			// 当前 SSE 长连接不会自己返回，通常会在这里超时
+			log.Printf("http shutdown: %v, forcing close", err)
+			_ = srv.Close()
+		}
+	}()
+
+	// 2. 取消消费者并等待 drain
+	go func() {
+		defer wg.Done()
+		cancelConsumer()
+		consumerWG.Wait()
+		log.Printf("notification consumer stopped")
+	}()
+
+	wg.Wait()
+
+	// 3. 所有使用 MQ 的地方都结束后，再关闭连接
+	if mq != nil {
+		closeCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		if err := mq.Close(closeCtx); err != nil {
+			log.Printf("rabbitmq close: %v", err)
+		}
+		cancel()
+	}
+
+	log.Printf("shutdown complete")
 }
 func initPublisher(name string, ctx context.Context, f func(context.Context) (messaging.Publisher, error)) messaging.Publisher {
 	pub, err := f(ctx)

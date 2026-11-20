@@ -31,6 +31,12 @@ func NewClient(conf config.RabbitMQConfig) (*Client, error) {
 		conn: conn,
 	}, nil
 }
+func (c *Client) Close(ctx context.Context) error {
+	if c == nil || c.conn == nil {
+		return nil
+	}
+	return c.conn.Close(ctx)
+}
 
 func (c *Client) newPublisher(ctx context.Context, exchange, routingKey string) (messaging.Publisher, error) {
 	addr := rmq.ExchangeAddress{Exchange: exchange, Key: routingKey}
