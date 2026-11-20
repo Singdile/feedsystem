@@ -13,12 +13,18 @@ import (
 type fakeMessage struct {
 	body     []byte
 	accepted bool
+	requeued bool
 }
 
 func (m *fakeMessage) Body() []byte { return m.body }
 
 func (m *fakeMessage) Accept(ctx context.Context) error {
 	m.accepted = true
+	return nil
+}
+
+func (m *fakeMessage) Requeue(ctx context.Context) error {
+	m.requeued = true
 	return nil
 }
 

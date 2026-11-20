@@ -17,12 +17,18 @@ import (
 type fakeMessage struct {
 	body     []byte
 	accepted atomic.Bool
+	requeued atomic.Bool
 }
 
 func (m *fakeMessage) Body() []byte { return m.body }
 
 func (m *fakeMessage) Accept(ctx context.Context) error {
 	m.accepted.Store(true)
+	return nil
+}
+
+func (m *fakeMessage) Requeue(ctx context.Context) error {
+	m.requeued.Store(true)
 	return nil
 }
 

@@ -9,6 +9,7 @@ import (
 type Message interface {
 	Body() []byte
 	Accept(ctx context.Context) error
+	Requeue(ctx context.Context) error
 }
 
 type Handler func(ctx context.Context, msg Message) error
