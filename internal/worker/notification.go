@@ -180,13 +180,11 @@ func processPublish(ctx context.Context, db *gorm.DB, cache *data.RedisClient, h
 		return err
 	}
 
-	if !created { //幂等跳过，不用计数/推送
-		return nil
+	if created {
+		// 推送信息给视频作者
+		incrUnread(ctx, db, cache, notifiacitonEvent.RecipientID)
+		hub.Push(notifiacitonEvent.RecipientID, &notifiacitonEvent)
 	}
-
-	// 推送信息给视频作者
-	incrUnread(ctx, db, cache, notifiacitonEvent.RecipientID)
-	hub.Push(notifiacitonEvent.RecipientID, &notifiacitonEvent)
 
 	// 推送信息给提及者
 	names := extractMention(commentEvent.Content)
@@ -217,7 +215,7 @@ func processPublish(ctx context.Context, db *gorm.DB, cache *data.RedisClient, h
 		}
 
 		if !created { //幂等跳过，不用计数/推送
-			return nil
+			continue
 		}
 
 		incrUnread(ctx, db, cache, mention.RecipientID)
