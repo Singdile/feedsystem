@@ -25,3 +25,10 @@ func (r *PopularityRepo) UpdatePopularity(ctx context.Context, videoID uint, cha
 	_ = r.rdb.Expire(ctx, key, time.Duration(2)*time.Hour)
 	return err
 }
+
+func (r *PopularityRepo) SetNX(ctx context.Context, key string, val any, ttl time.Duration) (bool, error) {
+	return r.rdb.SetNX(ctx, key, val, ttl)
+}
+func (r *PopularityRepo) Del(ctx context.Context, key string) error {
+	return r.rdb.Del(ctx, key)
+}

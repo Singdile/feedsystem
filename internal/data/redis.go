@@ -380,3 +380,8 @@ return v
 
 	return script.Run(ctx, c.rdb, []string{key}, seed, ttl.Milliseconds()).Int64()
 }
+
+// SetNX set if not exists
+func (c *RedisClient) SetNX(ctx context.Context, key string, val any, ttl time.Duration) (bool, error) {
+	return c.rdb.SetNX(ctx, key, val, ttl).Result()
+}
